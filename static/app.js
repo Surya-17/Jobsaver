@@ -17,6 +17,24 @@ function fmtDatetime(iso) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+function fmtDate(dateStr) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const opts = { month: 'short', day: 'numeric' };
+  if (y !== new Date().getFullYear()) opts.year = 'numeric';
+  return date.toLocaleDateString('en-US', opts);
+}
+
+function reformatDates() {
+  document.querySelectorAll('.seen[data-iso]').forEach(el => {
+    if (el.dataset.iso) el.textContent = 'Seen ' + fmtDatetime(el.dataset.iso);
+  });
+  document.querySelectorAll('.posted[data-date]').forEach(el => {
+    if (el.dataset.date) el.textContent = 'Posted ' + fmtDate(el.dataset.date);
+  });
+}
+
 function atsClass(type) {
   const known = ['greenhouse', 'workday', 'generic', 'amazon', 'apple', 'microsoft'];
   return known.includes(type) ? `ats-${type}` : 'ats-generic';
@@ -24,7 +42,7 @@ function atsClass(type) {
 
 function renderCard(job) {
   const location = job.location ? `<span class="location">📍 ${escHtml(job.location)}</span>` : '';
-  const posted = job.date_posted ? `<span class="posted">Posted ${escHtml(job.date_posted)}</span>` : '';
+  const posted = job.date_posted ? `<span class="posted">Posted ${escHtml(fmtDate(job.date_posted))}</span>` : '';
   const seen = `<span class="seen">Seen ${escHtml(fmtDatetime(job.first_seen_at || job.scraped_at))}</span>`;
 
   const actions = currentView === 'skipped'
@@ -330,6 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('f-since').addEventListener('change', applyFilters);
 
   fetchStats();
+  reformatDates();
 
   // Resume polling if scrape is already running on page load
   fetch('/api/scrape/status').then(r => r.json()).then(d => {

@@ -94,9 +94,9 @@
           <div class="job-meta">
             {% if job.location %}<span class="location">📍 {{ job.location }}</span>{% endif %}
             {% if job.date_posted %}
-            <span class="posted">Posted {{ job.date_posted }}</span>
+            <span class="posted" data-date="{{ job.date_posted }}">Posted {{ job.date_posted }}</span>
             {% endif %}
-            <span class="seen">Seen {{ (job.first_seen_at or job.scraped_at or '')[:16].replace('T', ' ') }} UTC</span>
+            <span class="seen" data-iso="{{ job.first_seen_at or job.scraped_at or '' }}">Seen {{ (job.first_seen_at or job.scraped_at or '')[:16].replace('T', ' ') }} UTC</span>
           </div>
         </div>
         {% endfor %}
