@@ -384,6 +384,47 @@ async def _scrape_generic_playwright(
     return jobs
 
 
+# ── Ashby ─────────────────────────────────────────────────────────────────────
+
+async def _scrape_ashby(
+    session: aiohttp.ClientSession,
+    company_cfg: dict,
+    search_titles: list[str],
+) -> list[dict]:
+    from urllib.parse import urlparse, unquote
+    slug = unquote(urlparse(company_cfg["career_url"]).path.lstrip("/"))
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+
+    try:
+        async with session.get(
+            api_url,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            if resp.status != 200:
+                logger.warning("[Ashby] HTTP %d for %s", resp.status, company_cfg["company_name"])
+                return []
+            data = await resp.json(content_type=None)
+    except Exception as exc:
+        logger.error("[Ashby] %s: %s", company_cfg["company_name"], exc)
+        return []
+
+    jobs = []
+    for raw in data.get("jobs", []):
+        job_title = raw.get("title", "")
+        matched, keyword = _title_matches(job_title, search_titles)
+        if not matched:
+            continue
+        job_url = raw.get("jobUrl", "")
+        if not job_url:
+            continue
+        location = raw.get("location", "")
+        date_posted = _parse_date(raw.get("publishedAt") or raw.get("updatedAt"))
+        jobs.append(_job(company_cfg, job_title, location, job_url, keyword, date_posted))
+
+    logger.info("[Ashby] %s → %d matches", company_cfg["company_name"], len(jobs))
+    return jobs
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 async def scrape_company(
@@ -398,6 +439,8 @@ async def scrape_company(
         return await _scrape_amazon(session, company_cfg, search_titles)
     if ats == "workday":
         return await _scrape_workday_api(session, company_cfg, search_titles)
+    if ats == "ashby":
+        return await _scrape_ashby(session, company_cfg, search_titles)
 
     if playwright_browser is None:
         logger.warning("[Generic] No Playwright browser for %s, skipping", company_cfg["company_name"])

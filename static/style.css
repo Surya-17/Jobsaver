@@ -252,6 +252,7 @@ main {
 .ats-amazon     { background: rgba(69,26,3,0.4);   color: #fdba74; border: 1px solid #451a03; }
 .ats-apple      { background: rgba(28,28,30,0.4);  color: #d1d5db; border: 1px solid #2a2a2e; }
 .ats-microsoft  { background: rgba(12,35,64,0.4);  color: #7dd3fc; border: 1px solid #0c2340; }
+.ats-ashby      { background: rgba(99,102,241,0.12); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
 
 .status-pill {
   font-size: 10px;

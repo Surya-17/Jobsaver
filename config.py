@@ -447,6 +447,16 @@ COMPANIES = [
         "enabled": True,
     },
 
+    # ── Ashby ────────────────────────────────────────────────────────────────
+    {
+        "company_name": "Edison Scientific",
+        "ats_type": "ashby",
+        "greenhouse_token": None,
+        "career_url": "https://jobs.ashbyhq.com/Edison%20Scientific",
+        "search_url_template": None,
+        "enabled": True,
+    },
+
     # ── Disabled (bad/unverified portal URLs) ────────────────────────────────
     {
         "company_name": "Walgreens Boots Alliance",

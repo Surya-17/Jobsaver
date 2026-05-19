@@ -36,7 +36,7 @@ function reformatDates() {
 }
 
 function atsClass(type) {
-  const known = ['greenhouse', 'workday', 'generic', 'amazon', 'apple', 'microsoft'];
+  const known = ['greenhouse', 'workday', 'generic', 'amazon', 'apple', 'microsoft', 'ashby'];
   return known.includes(type) ? `ats-${type}` : 'ats-generic';
 }
 
