@@ -14,7 +14,7 @@
         <span id="stat-total">{{ stats.total_jobs }}</span> jobs &nbsp;·&nbsp;
         <span id="stat-companies">{{ stats.company_count }}</span> companies
         {% if stats.last_scraped %}
-        &nbsp;·&nbsp; last scraped <span id="stat-date" data-iso="{{ stats.last_scraped }}">{{ stats.last_scraped[:10] }}</span>
+        &nbsp;·&nbsp; last scraped <span id="stat-date" data-iso="{{ stats.last_scraped }}">{{ stats.last_scraped[:16].replace('T', ' ') }} UTC</span>
         {% endif %}
       </div>
     </div>
@@ -76,7 +76,7 @@
             {% if job.date_posted %}
             <span class="posted">Posted {{ job.date_posted }}</span>
             {% endif %}
-            <span class="seen">Seen {{ job.first_seen_at[:10] if job.first_seen_at else job.scraped_at[:10] }}</span>
+            <span class="seen">Seen {{ (job.first_seen_at or job.scraped_at or '')[:16].replace('T', ' ') }} UTC</span>
           </div>
         </div>
         {% endfor %}

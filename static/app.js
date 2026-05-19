@@ -6,6 +6,12 @@ let pollTimer = null;
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
+function fmtDatetime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 function atsClass(type) {
   const known = ['greenhouse', 'workday', 'generic', 'amazon', 'apple', 'microsoft'];
   return known.includes(type) ? `ats-${type}` : 'ats-generic';
@@ -14,7 +20,7 @@ function atsClass(type) {
 function renderCard(job) {
   const location = job.location ? `<span class="location">📍 ${escHtml(job.location)}</span>` : '';
   const posted = job.date_posted ? `<span class="posted">Posted ${escHtml(job.date_posted)}</span>` : '';
-  const seen = `<span class="seen">Seen ${escHtml((job.first_seen_at || job.scraped_at || '').slice(0, 10))}</span>`;
+  const seen = `<span class="seen">Seen ${escHtml(fmtDatetime(job.first_seen_at || job.scraped_at))}</span>`;
   return `
     <div class="job-card">
       <div class="job-card-top">
@@ -147,7 +153,11 @@ function pollScrapeStatus() {
 
         if (data.last_run) {
           const r = data.last_run;
-          msg.textContent = `Done: ${r.total_new} new, ${r.total_updated} updated, ${r.companies_failed} failed.`;
+          const secs = r.started_at && r.finished_at
+            ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000)
+            : null;
+          const duration = secs !== null ? ` in ${secs}s` : '';
+          msg.textContent = `Done${duration}: ${r.total_new} new, ${r.total_updated} updated, ${r.companies_failed} failed.`;
         }
         // Refresh stats + job list
         fetchJobs();
@@ -165,7 +175,7 @@ async function fetchStats() {
     document.getElementById('stat-companies').textContent = s.company_count;
     const dateEl = document.getElementById('stat-date');
     if (dateEl && s.last_scraped) {
-      dateEl.textContent = s.last_scraped.slice(0, 10);
+      dateEl.textContent = fmtDatetime(s.last_scraped);
       dateEl.dataset.iso = s.last_scraped;
     }
   } catch { /* ignore */ }

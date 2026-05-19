@@ -212,6 +212,7 @@ async def run_scrape(
             return {"error": "Scrape already running"}
         _scrape_running = True
 
+    started_at = datetime.now(timezone.utc)
     search_titles = titles or SEARCH_TITLES
     companies = [c for c in COMPANIES if c["enabled"]]
     if test_mode:
@@ -248,6 +249,7 @@ async def run_scrape(
         _scrape_running = False
 
     _last_run = {
+        "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "companies_scraped": len(companies) - len(errors),
         "companies_failed": len(errors),
