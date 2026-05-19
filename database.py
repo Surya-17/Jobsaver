@@ -27,6 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_job_title    ON jobs(job_title);
 MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN date_posted TEXT",
     "ALTER TABLE jobs ADD COLUMN first_seen_at TEXT NOT NULL DEFAULT (datetime('now'))",
+    "ALTER TABLE jobs ADD COLUMN status TEXT",
 ]
 
 
@@ -66,6 +67,12 @@ def insert_job(conn: sqlite3.Connection, job: dict) -> bool:
     return cursor.rowcount == 1
 
 
+def update_job_status(conn: sqlite3.Connection, job_id: int, status: str | None) -> bool:
+    cursor = conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status, job_id))
+    conn.commit()
+    return cursor.rowcount == 1
+
+
 def query_jobs(
     conn: sqlite3.Connection,
     company: str | None = None,
@@ -73,10 +80,16 @@ def query_jobs(
     since: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    view: str = "active",
+    sort: str = "posted",
 ) -> tuple[list[dict], int]:
-    """Return (jobs, total_count) ordered by date_posted desc, then first_seen_at desc."""
-    conditions = []
+    conditions: list[str] = []
     params: list = []
+
+    if view == "skipped":
+        conditions.append("status = 'skipped'")
+    else:
+        conditions.append("(status IS NULL OR status != 'skipped')")
 
     if company:
         conditions.append("company_name = ?")
@@ -88,14 +101,12 @@ def query_jobs(
         conditions.append("first_seen_at >= ?")
         params.append(since)
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    where = "WHERE " + " AND ".join(conditions)
+    order = "first_seen_at DESC" if sort == "found" else "COALESCE(date_posted, first_seen_at) DESC"
 
     total = conn.execute(f"SELECT COUNT(*) FROM jobs {where}", params).fetchone()[0]
-
     rows = conn.execute(
-        f"""SELECT * FROM jobs {where}
-            ORDER BY COALESCE(date_posted, first_seen_at) DESC
-            LIMIT ? OFFSET ?""",
+        f"SELECT * FROM jobs {where} ORDER BY {order} LIMIT ? OFFSET ?",
         params + [limit, offset],
     ).fetchall()
 
@@ -110,11 +121,14 @@ def get_companies(conn: sqlite3.Connection) -> list[str]:
 
 
 def get_stats(conn: sqlite3.Connection) -> dict:
-    total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-    company_count = conn.execute("SELECT COUNT(DISTINCT company_name) FROM jobs").fetchone()[0]
+    active = "(status IS NULL OR status != 'skipped')"
+    total = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE {active}").fetchone()[0]
+    company_count = conn.execute(f"SELECT COUNT(DISTINCT company_name) FROM jobs WHERE {active}").fetchone()[0]
     last_scraped = conn.execute("SELECT MAX(scraped_at) FROM jobs").fetchone()[0]
+    skipped_count = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'skipped'").fetchone()[0]
     return {
         "total_jobs": total,
         "company_count": company_count,
         "last_scraped": last_scraped,
+        "skipped_count": skipped_count,
     }

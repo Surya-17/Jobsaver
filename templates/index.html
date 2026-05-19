@@ -29,6 +29,9 @@
       <button id="test-btn" class="btn-secondary" onclick="triggerScrape(true)" {% if scrape_running %}disabled{% endif %}>
         Test (10)
       </button>
+      <button id="skipped-btn" class="btn-secondary" onclick="setView('skipped')">
+        Skipped (<span id="skipped-count">0</span>)
+      </button>
       <div id="scrape-msg" class="scrape-msg"></div>
     </div>
   </header>
@@ -54,6 +57,12 @@
 
         <button type="button" class="btn-primary" onclick="applyFilters()">Apply</button>
         <button type="button" class="btn-secondary" onclick="clearFilters()">Clear</button>
+
+        <label>Sort by</label>
+        <div class="sort-toggle">
+          <button class="sort-btn active" id="sort-posted" onclick="setSort('posted')">Posted</button>
+          <button class="sort-btn" id="sort-found" onclick="setSort('found')">Found</button>
+        </div>
       </form>
     </aside>
 
@@ -65,10 +74,18 @@
 
       <div id="job-list">
         {% for job in jobs %}
-        <div class="job-card">
+        <div class="job-card" data-id="{{ job.id }}">
           <div class="job-card-top">
             <span class="company-badge">{{ job.company_name }}</span>
             <span class="ats-badge ats-{{ job.ats_type }}">{{ job.ats_type }}</span>
+            <div class="job-actions">
+              <select class="status-select" data-id="{{ job.id }}" onchange="handleStatusChange(this)">
+                <option value="" {% if not job.status %}selected{% endif %}>Actions ▾</option>
+                <option value="applied" {% if job.status == 'applied' %}selected{% endif %}>Applied</option>
+                <option value="resume_modify" {% if job.status == 'resume_modify' %}selected{% endif %}>Modify Resume</option>
+                <option value="skip">Skip</option>
+              </select>
+            </div>
           </div>
           <h3 class="job-title"><a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.job_title }}</a></h3>
           <div class="job-meta">
@@ -91,6 +108,12 @@
         {% endif %}
       </div>
     </main>
+  </div>
+
+  <div id="undo-toast" class="undo-toast">
+    <span>Job skipped.</span>
+    <button onclick="undoSkip()">Undo</button>
+    <div class="undo-progress"><div id="undo-bar"></div></div>
   </div>
 
   <script src="/static/app.js"></script>

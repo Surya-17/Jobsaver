@@ -1,8 +1,13 @@
 let currentOffset = 0;
 const PAGE_SIZE = 50;
 let currentFilters = {};
+let currentSort = 'posted';
+let currentView = 'active';
 let debounceTimer = null;
 let pollTimer = null;
+let pendingSkipId = null;
+let pendingSkipCard = null;
+let pendingSkipTimer = null;
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
@@ -21,11 +26,22 @@ function renderCard(job) {
   const location = job.location ? `<span class="location">📍 ${escHtml(job.location)}</span>` : '';
   const posted = job.date_posted ? `<span class="posted">Posted ${escHtml(job.date_posted)}</span>` : '';
   const seen = `<span class="seen">Seen ${escHtml(fmtDatetime(job.first_seen_at || job.scraped_at))}</span>`;
+
+  const actions = currentView === 'skipped'
+    ? `<button class="restore-btn" onclick="restoreJob(${job.id})">Restore</button>`
+    : `<select class="status-select" data-id="${job.id}" onchange="handleStatusChange(this)">
+        <option value="" ${!job.status ? 'selected' : ''}>Actions ▾</option>
+        <option value="applied" ${job.status === 'applied' ? 'selected' : ''}>Applied</option>
+        <option value="resume_modify" ${job.status === 'resume_modify' ? 'selected' : ''}>Modify Resume</option>
+        <option value="skip">Skip</option>
+       </select>`;
+
   return `
-    <div class="job-card">
+    <div class="job-card" data-id="${job.id}">
       <div class="job-card-top">
         <span class="company-badge">${escHtml(job.company_name)}</span>
         <span class="ats-badge ${atsClass(job.ats_type)}">${escHtml(job.ats_type || '')}</span>
+        <div class="job-actions">${actions}</div>
       </div>
       <h3 class="job-title">
         <a href="${escHtml(job.job_url)}" target="_blank" rel="noopener">${escHtml(job.job_title)}</a>
@@ -49,7 +65,7 @@ function escHtml(str) {
 // ── Fetching ─────────────────────────────────────────────────────────────────
 
 async function fetchJobs(append = false) {
-  const params = new URLSearchParams({ limit: PAGE_SIZE, offset: currentOffset });
+  const params = new URLSearchParams({ limit: PAGE_SIZE, offset: currentOffset, sort: currentSort, view: currentView });
   if (currentFilters.company) params.set('company', currentFilters.company);
   if (currentFilters.title)   params.set('title',   currentFilters.title);
   if (currentFilters.since)   params.set('since',   currentFilters.since);
@@ -75,6 +91,109 @@ async function fetchJobs(append = false) {
   wrap.innerHTML = loaded < data.total
     ? '<button id="load-more-btn" class="btn-secondary" onclick="loadMore()">Load more</button>'
     : '';
+}
+
+// ── Sort & View ───────────────────────────────────────────────────────────────
+
+function setSort(sort) {
+  currentSort = sort;
+  currentOffset = 0;
+  document.getElementById('sort-posted').classList.toggle('active', sort === 'posted');
+  document.getElementById('sort-found').classList.toggle('active', sort === 'found');
+  fetchJobs();
+}
+
+function setView(view) {
+  currentView = view;
+  currentOffset = 0;
+  const skippedBtn = document.getElementById('skipped-btn');
+  if (view === 'skipped') {
+    skippedBtn.textContent = '← Active Jobs';
+    skippedBtn.onclick = () => setView('active');
+  } else {
+    fetchStats(); // refresh skipped count in button
+    skippedBtn.onclick = () => setView('skipped');
+  }
+  fetchJobs();
+}
+
+// ── Status / Skip ─────────────────────────────────────────────────────────────
+
+async function handleStatusChange(select) {
+  const jobId = parseInt(select.dataset.id);
+  const status = select.value;
+  if (!status) return;
+
+  if (status === 'skip') {
+    select.value = '';
+    const card = select.closest('.job-card');
+    card.classList.add('skipping');
+    showUndoToast(jobId, card);
+  } else {
+    await fetch(`/api/jobs/${jobId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+  }
+}
+
+function showUndoToast(jobId, cardEl) {
+  if (pendingSkipTimer) commitSkip();
+
+  pendingSkipId = jobId;
+  pendingSkipCard = cardEl;
+
+  const toast = document.getElementById('undo-toast');
+  const bar = document.getElementById('undo-bar');
+  toast.classList.add('visible');
+  bar.style.transition = 'none';
+  bar.style.width = '100%';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.style.transition = 'width 5s linear';
+    bar.style.width = '0%';
+  }));
+
+  pendingSkipTimer = setTimeout(commitSkip, 5000);
+}
+
+async function commitSkip() {
+  if (!pendingSkipId) return;
+  clearTimeout(pendingSkipTimer);
+  const id = pendingSkipId;
+  const card = pendingSkipCard;
+  pendingSkipId = null;
+  pendingSkipCard = null;
+  pendingSkipTimer = null;
+  document.getElementById('undo-toast').classList.remove('visible');
+
+  await fetch(`/api/jobs/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'skipped' }),
+  });
+  card?.remove();
+  fetchStats();
+}
+
+function undoSkip() {
+  clearTimeout(pendingSkipTimer);
+  const card = pendingSkipCard;
+  pendingSkipId = null;
+  pendingSkipCard = null;
+  pendingSkipTimer = null;
+  document.getElementById('undo-toast').classList.remove('visible');
+  card?.classList.remove('skipping');
+}
+
+async function restoreJob(jobId) {
+  await fetch(`/api/jobs/${jobId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: null }),
+  });
+  document.querySelector(`.job-card[data-id="${jobId}"]`)?.remove();
+  fetchStats();
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────────
@@ -178,6 +297,8 @@ async function fetchStats() {
       dateEl.textContent = fmtDatetime(s.last_scraped);
       dateEl.dataset.iso = s.last_scraped;
     }
+    const skippedCountEl = document.getElementById('skipped-count');
+    if (skippedCountEl) skippedCountEl.textContent = s.skipped_count ?? 0;
   } catch { /* ignore */ }
 }
 
@@ -190,6 +311,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('f-company').addEventListener('change', applyFilters);
   document.getElementById('f-since').addEventListener('change', applyFilters);
+
+  fetchStats();
 
   // Resume polling if scrape is already running on page load
   fetch('/api/scrape/status').then(r => r.json()).then(d => {

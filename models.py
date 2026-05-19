@@ -13,12 +13,18 @@ class JobResponse(BaseModel):
     requested_title: str | None
     date_posted: str | None
     first_seen_at: str | None
+    status: str | None = None
+
+
+class StatusUpdate(BaseModel):
+    status: str | None = None
 
 
 class StatsResponse(BaseModel):
     total_jobs: int
     company_count: int
     last_scraped: str | None
+    skipped_count: int = 0
 
 
 class ScrapeStatusResponse(BaseModel):

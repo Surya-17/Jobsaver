@@ -246,3 +246,113 @@ main {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Sort toggle ─────────────────────────────────────────────────────────── */
+.sort-toggle {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.sort-btn {
+  flex: 1;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sort-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ── Job card status controls ────────────────────────────────────────────── */
+.job-actions { margin-left: auto; }
+
+.status-select {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.status-select:hover { border-color: var(--accent); color: var(--text); }
+
+.restore-btn {
+  background: transparent;
+  color: var(--green);
+  border: 1px solid var(--green);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.restore-btn:hover { background: rgba(34,197,94,0.1); }
+
+.job-card.skipping {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ── Undo toast ──────────────────────────────────────────────────────────── */
+.undo-toast {
+  position: fixed;
+  bottom: -80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  z-index: 100;
+  min-width: 280px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  transition: bottom 0.25s ease;
+}
+
+.undo-toast.visible { bottom: 24px; }
+
+.undo-toast button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.undo-toast button:hover { background: var(--accent-hover); }
+
+.undo-progress {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+#undo-bar {
+  height: 100%;
+  background: var(--accent);
+  width: 100%;
+}

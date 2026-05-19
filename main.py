@@ -3,13 +3,13 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from database import get_db, get_companies, get_stats, query_jobs
-from models import JobsResponse, JobResponse, ScrapeStatusResponse, StatsResponse
+from database import get_db, get_companies, get_stats, query_jobs, update_job_status
+from models import JobsResponse, JobResponse, ScrapeStatusResponse, StatsResponse, StatusUpdate
 from scrapers.runner import get_last_run, is_running, run_scrape
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -55,14 +55,31 @@ async def get_jobs(
     since: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    view: str = "active",
+    sort: str = "posted",
 ):
     limit = min(limit, 200)
     conn = get_db()
     try:
-        jobs, total = query_jobs(conn, company=company, title_keyword=title, since=since, limit=limit, offset=offset)
+        jobs, total = query_jobs(
+            conn, company=company, title_keyword=title, since=since,
+            limit=limit, offset=offset, view=view, sort=sort,
+        )
     finally:
         conn.close()
     return {"jobs": jobs, "total": total, "offset": offset, "limit": limit}
+
+
+@app.patch("/api/jobs/{job_id}/status")
+async def set_job_status(job_id: int, body: StatusUpdate):
+    conn = get_db()
+    try:
+        ok = update_job_status(conn, job_id, body.status)
+    finally:
+        conn.close()
+    if not ok:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"ok": True}
 
 
 @app.get("/api/companies")
