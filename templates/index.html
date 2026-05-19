@@ -58,6 +58,7 @@
         <button type="button" class="btn-primary" onclick="applyFilters()">Apply</button>
         <button type="button" class="btn-secondary" onclick="clearFilters()">Clear</button>
 
+        <div class="sidebar-divider"></div>
         <label>Sort by</label>
         <div class="sort-toggle">
           <button class="sort-btn active" id="sort-posted" onclick="setSort('posted')">Posted</button>
@@ -74,10 +75,12 @@
 
       <div id="job-list">
         {% for job in jobs %}
-        <div class="job-card" data-id="{{ job.id }}">
+        <div class="job-card" data-id="{{ job.id }}" data-status="{{ job.status or '' }}">
           <div class="job-card-top">
             <span class="company-badge">{{ job.company_name }}</span>
             <span class="ats-badge ats-{{ job.ats_type }}">{{ job.ats_type }}</span>
+            {% if job.status == 'applied' %}<span class="status-pill applied">Applied</span>
+            {% elif job.status == 'resume_modify' %}<span class="status-pill resume_modify">Modify Resume</span>{% endif %}
             <div class="job-actions">
               <select class="status-select" data-id="{{ job.id }}" onchange="handleStatusChange(this)">
                 <option value="" {% if not job.status %}selected{% endif %}>Actions ▾</option>
@@ -98,7 +101,11 @@
         </div>
         {% endfor %}
         {% if not jobs %}
-        <p class="empty">No jobs yet. Click <strong>Scrape Now</strong> to fetch listings.</p>
+        <div class="empty">
+          <div class="empty-icon">🔍</div>
+          <p>No jobs yet.</p>
+          <p style="font-size:12px; margin-top:4px;">Click <strong>Scrape All</strong> to fetch listings.</p>
+        </div>
         {% endif %}
       </div>
 

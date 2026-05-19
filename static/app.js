@@ -36,11 +36,18 @@ function renderCard(job) {
         <option value="skip">Skip</option>
        </select>`;
 
+  const pill = job.status === 'applied'
+    ? `<span class="status-pill applied">Applied</span>`
+    : job.status === 'resume_modify'
+    ? `<span class="status-pill resume_modify">Modify Resume</span>`
+    : '';
+
   return `
-    <div class="job-card" data-id="${job.id}">
+    <div class="job-card" data-id="${job.id}" data-status="${escHtml(job.status || '')}">
       <div class="job-card-top">
         <span class="company-badge">${escHtml(job.company_name)}</span>
         <span class="ats-badge ${atsClass(job.ats_type)}">${escHtml(job.ats_type || '')}</span>
+        ${pill}
         <div class="job-actions">${actions}</div>
       </div>
       <h3 class="job-title">
@@ -135,6 +142,16 @@ async function handleStatusChange(select) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
+    // Update card appearance immediately
+    const card = select.closest('.job-card');
+    card.dataset.status = status;
+    card.querySelector('.status-pill')?.remove();
+    const pill = status === 'applied'
+      ? `<span class="status-pill applied">Applied</span>`
+      : status === 'resume_modify'
+      ? `<span class="status-pill resume_modify">Modify Resume</span>`
+      : '';
+    if (pill) card.querySelector('.ats-badge').insertAdjacentHTML('afterend', pill);
   }
 }
 
