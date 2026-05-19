@@ -47,11 +47,11 @@ _NON_FULLTIME_PAT = re.compile(
 )
 
 
-def _is_us_location(location: str) -> bool:
-    if not location:
+def _is_us_location(location: str, job_url: str = "") -> bool:
+    check = (location + " " + job_url).lower()
+    if not check.strip():
         return True
-    loc = location.lower()
-    return not any(kw in loc for kw in _NON_US)
+    return not any(kw in check for kw in _NON_US)
 
 
 def _is_eligible(job_title: str) -> bool:
@@ -191,7 +191,7 @@ async def _scrape_one(
                 # amazon, workday → async JSON API scrapers (no Playwright needed)
                 jobs = await scrape_company(session, None, company_cfg, search_titles)
 
-            jobs = [j for j in jobs if _is_us_location(j.get("location", ""))
+            jobs = [j for j in jobs if _is_us_location(j.get("location", ""), j.get("job_url", ""))
                     and _is_eligible(j.get("job_title", ""))]
             for job in jobs:
                 if "years_exp" not in job:
