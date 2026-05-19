@@ -254,6 +254,18 @@ main {
 .ats-microsoft  { background: rgba(12,35,64,0.4);  color: #7dd3fc; border: 1px solid #0c2340; }
 .ats-ashby      { background: rgba(99,102,241,0.12); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
 
+.exp-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.exp-low  { background: rgba(34,197,94,0.12);  color: #86efac; border: 1px solid rgba(34,197,94,0.25); }
+.exp-mid  { background: rgba(234,179,8,0.12);  color: #fde047; border: 1px solid rgba(234,179,8,0.25); }
+.exp-high { background: rgba(239,68,68,0.12);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.25); }
+
 .status-pill {
   font-size: 10px;
   padding: 2px 8px;

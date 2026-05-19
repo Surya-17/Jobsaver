@@ -55,6 +55,14 @@
         <label for="f-since">Posted since</label>
         <input id="f-since" name="since" type="date" />
 
+        <label for="f-max-exp">Max experience</label>
+        <select id="f-max-exp" name="max_exp">
+          <option value="">Any experience</option>
+          <option value="2">&lt; 2 years</option>
+          <option value="4">&lt; 4 years</option>
+          <option value="6">&lt; 6 years</option>
+        </select>
+
         <button type="button" class="btn-primary" onclick="applyFilters()">Apply</button>
         <button type="button" class="btn-secondary" onclick="clearFilters()">Clear</button>
 

@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 import aiohttp
 
+from scrapers.exp_parser import infer_exp
+
 logger = logging.getLogger(__name__)
 
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
@@ -27,16 +29,19 @@ def _parse_date(raw_date: str | None) -> str | None:
 
 
 def _normalize(raw: dict, company_cfg: dict, requested_title: str) -> dict:
+    title = raw.get("title", "")
+    content = raw.get("content", "")
     return {
         "scraped_at": datetime.now(timezone.utc).isoformat(),
         "company_name": company_cfg["company_name"],
-        "job_title": raw.get("title", ""),
+        "job_title": title,
         "location": (raw.get("location") or {}).get("name") or "",
         "job_url": raw.get("absolute_url", ""),
         "source_url": company_cfg["career_url"],
         "ats_type": "greenhouse",
         "requested_title": requested_title,
         "date_posted": _parse_date(raw.get("created_at") or raw.get("updated_at")),
+        "years_exp": infer_exp(title, content),
     }
 
 

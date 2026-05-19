@@ -57,13 +57,14 @@ async def get_jobs(
     offset: int = 0,
     view: str = "active",
     sort: str = "posted",
+    max_exp: int | None = None,
 ):
     limit = min(limit, 200)
     conn = get_db()
     try:
         jobs, total = query_jobs(
             conn, company=company, title_keyword=title, since=since,
-            limit=limit, offset=offset, view=view, sort=sort,
+            limit=limit, offset=offset, view=view, sort=sort, max_exp=max_exp,
         )
     finally:
         conn.close()

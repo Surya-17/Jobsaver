@@ -11,6 +11,7 @@ from config import COMPANIES, CONCURRENCY_LIMIT, SEARCH_TITLES, TEST_COMPANIES
 from database import get_db, insert_job
 from scrapers.greenhouse import fetch_greenhouse_jobs
 from scrapers.generic import scrape_company
+from scrapers.exp_parser import infer_exp
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,9 @@ async def _scrape_one(
 
             jobs = [j for j in jobs if _is_us_location(j.get("location", ""))
                     and _is_eligible(j.get("job_title", ""))]
+            for job in jobs:
+                if "years_exp" not in job:
+                    job["years_exp"] = infer_exp(job.get("job_title", ""))
             new_count = sum(1 for job in jobs if insert_job(db_conn, job))
             return new_count, len(jobs) - new_count, None
 

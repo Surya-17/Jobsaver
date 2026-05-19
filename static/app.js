@@ -1,6 +1,6 @@
 let currentOffset = 0;
 const PAGE_SIZE = 50;
-let currentFilters = {};
+let currentFilters = { maxExp: null };
 let currentSort = 'posted';
 let currentView = 'active';
 let debounceTimer = null;
@@ -40,6 +40,13 @@ function atsClass(type) {
   return known.includes(type) ? `ats-${type}` : 'ats-generic';
 }
 
+function expBadge(years_exp) {
+  if (years_exp == null || years_exp === 0) return '';
+  if (years_exp >= 6) return `<span class="exp-badge exp-high">${years_exp}+ yrs req</span>`;
+  if (years_exp >= 4) return `<span class="exp-badge exp-mid">${years_exp} yrs req</span>`;
+  return `<span class="exp-badge exp-low">${years_exp} yr${years_exp > 1 ? 's' : ''} req</span>`;
+}
+
 function renderCard(job) {
   const location = job.location ? `<span class="location">📍 ${escHtml(job.location)}</span>` : '';
   const posted = job.date_posted ? `<span class="posted">Posted ${escHtml(fmtDate(job.date_posted))}</span>` : '';
@@ -65,6 +72,7 @@ function renderCard(job) {
       <div class="job-card-top">
         <span class="company-badge">${escHtml(job.company_name)}</span>
         <span class="ats-badge ${atsClass(job.ats_type)}">${escHtml(job.ats_type || '')}</span>
+        ${expBadge(job.years_exp)}
         ${pill}
         <div class="job-actions">${actions}</div>
       </div>
@@ -94,6 +102,7 @@ async function fetchJobs(append = false) {
   if (currentFilters.company) params.set('company', currentFilters.company);
   if (currentFilters.title)   params.set('title',   currentFilters.title);
   if (currentFilters.since)   params.set('since',   currentFilters.since);
+  if (currentFilters.maxExp != null) params.set('max_exp', currentFilters.maxExp);
 
   const res = await fetch(`/api/jobs?${params}`);
   const data = await res.json();
@@ -234,10 +243,12 @@ async function restoreJob(jobId) {
 // ── Filters ───────────────────────────────────────────────────────────────────
 
 function applyFilters() {
+  const maxExpVal = document.getElementById('f-max-exp').value;
   currentFilters = {
     company: document.getElementById('f-company').value,
     title:   document.getElementById('f-title').value,
     since:   document.getElementById('f-since').value,
+    maxExp:  maxExpVal ? parseInt(maxExpVal) : null,
   };
   currentOffset = 0;
   fetchJobs();
@@ -247,7 +258,8 @@ function clearFilters() {
   document.getElementById('f-company').value = '';
   document.getElementById('f-title').value = '';
   document.getElementById('f-since').value = '';
-  currentFilters = {};
+  document.getElementById('f-max-exp').value = '';
+  currentFilters = { maxExp: null };
   currentOffset = 0;
   fetchJobs();
 }
@@ -346,6 +358,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('f-company').addEventListener('change', applyFilters);
   document.getElementById('f-since').addEventListener('change', applyFilters);
+  document.getElementById('f-max-exp').addEventListener('change', applyFilters);
 
   fetchStats();
   reformatDates();

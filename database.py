@@ -28,6 +28,7 @@ MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN date_posted TEXT",
     "ALTER TABLE jobs ADD COLUMN first_seen_at TEXT NOT NULL DEFAULT (datetime('now'))",
     "ALTER TABLE jobs ADD COLUMN status TEXT",
+    "ALTER TABLE jobs ADD COLUMN years_exp INTEGER",
 ]
 
 
@@ -50,19 +51,24 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
 
 
 def insert_job(conn: sqlite3.Connection, job: dict) -> bool:
-    """INSERT OR IGNORE — only inserts if job_url is new. Returns True if inserted."""
-    now = job.get("scraped_at", "")
+    """INSERT OR IGNORE — only inserts if job_url is new. Returns True if inserted.
+    For existing jobs, updates years_exp if it was previously unknown."""
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO jobs
             (first_seen_at, scraped_at, company_name, job_title, location,
-             job_url, source_url, ats_type, requested_title, date_posted)
+             job_url, source_url, ats_type, requested_title, date_posted, years_exp)
         VALUES
             (:scraped_at, :scraped_at, :company_name, :job_title, :location,
-             :job_url, :source_url, :ats_type, :requested_title, :date_posted)
+             :job_url, :source_url, :ats_type, :requested_title, :date_posted, :years_exp)
         """,
-        job,
+        {**job, "years_exp": job.get("years_exp", 0)},
     )
+    if cursor.rowcount == 0:
+        conn.execute(
+            "UPDATE jobs SET years_exp = ? WHERE job_url = ? AND years_exp IS NULL",
+            (job.get("years_exp", 0), job["job_url"]),
+        )
     conn.commit()
     return cursor.rowcount == 1
 
@@ -82,6 +88,7 @@ def query_jobs(
     offset: int = 0,
     view: str = "active",
     sort: str = "posted",
+    max_exp: int | None = None,
 ) -> tuple[list[dict], int]:
     conditions: list[str] = []
     params: list = []
@@ -100,6 +107,9 @@ def query_jobs(
     if since:
         conditions.append("first_seen_at >= ?")
         params.append(since)
+    if max_exp is not None:
+        conditions.append("COALESCE(years_exp, 0) < ?")
+        params.append(max_exp)
 
     where = "WHERE " + " AND ".join(conditions)
     order = "first_seen_at DESC" if sort == "found" else "COALESCE(date_posted, first_seen_at) DESC"

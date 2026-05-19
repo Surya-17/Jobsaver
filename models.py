@@ -14,6 +14,7 @@ class JobResponse(BaseModel):
     date_posted: str | None
     first_seen_at: str | None
     status: str | None = None
+    years_exp: int | None = None
 
 
 class StatusUpdate(BaseModel):
