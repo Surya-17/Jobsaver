@@ -446,6 +446,14 @@ COMPANIES = [
         "search_url_template": None,
         "enabled": True,
     },
+    {
+        "company_name": "Lenovo",
+        "ats_type": "generic",
+        "greenhouse_token": None,
+        "career_url": "https://jobs.lenovo.com/en_US/careers",
+        "search_url_template": None,
+        "enabled": True,
+    },
 
     # ── Ashby ────────────────────────────────────────────────────────────────
     {
@@ -565,6 +573,14 @@ COMPANIES = [
         "ats_type": "ashby",
         "greenhouse_token": None,
         "career_url": "https://jobs.ashbyhq.com/FullStory",
+        "search_url_template": None,
+        "enabled": True,
+    },
+    {
+        "company_name": "Notion",
+        "ats_type": "ashby",
+        "greenhouse_token": None,
+        "career_url": "https://jobs.ashbyhq.com/notion",
         "search_url_template": None,
         "enabled": True,
     },
