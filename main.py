@@ -1,15 +1,27 @@
 import asyncio
 import logging
+import re
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from database import get_db, get_companies, get_stats, query_jobs, update_job_status
-from models import JobsResponse, JobResponse, ScrapeStatusResponse, StatsResponse, StatusUpdate
+from database import (
+    get_db, get_companies, get_sources, get_stats, query_jobs, update_job_status,
+    get_job, set_job_detail, set_resume_path, set_job_queued, get_queued_jobs,
+    get_applied_jobs, get_applied_stats, insert_manual_job,
+)
+from models import (
+    JobsResponse, JobResponse, ScrapeStatusResponse, StatsResponse, StatusUpdate,
+    JDResponse, TailorResponse, ManualJob,
+)
+from scrapers.detail import fetch_job_detail
+from resume import tailor_resume_for_job, ResumeError
 from scrapers.runner import get_last_run, is_running, run_scrape
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -29,6 +41,7 @@ async def index(request: Request):
     try:
         jobs, total = query_jobs(conn, limit=50)
         companies = get_companies(conn)
+        sources = get_sources(conn)
         stats = get_stats(conn)
     finally:
         conn.close()
@@ -40,9 +53,27 @@ async def index(request: Request):
             "jobs": jobs,
             "total": total,
             "companies": companies,
+            "sources": sources,
             "stats": stats,
             "scrape_running": is_running(),
         },
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    conn = get_db()
+    try:
+        applied = get_applied_jobs(conn)
+        stats = get_applied_stats(conn)
+    finally:
+        conn.close()
+    now_week = datetime.now(timezone.utc).strftime("%Y-W%W")
+    this_week = next((w["count"] for w in stats["by_week"] if w["week"] == now_week), 0)
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={"applied": applied, "stats": stats, "this_week": this_week},
     )
 
 
@@ -51,8 +82,10 @@ async def index(request: Request):
 @app.get("/api/jobs", response_model=JobsResponse)
 async def get_jobs(
     company: str | None = None,
+    source: str | None = None,
     title: str | None = None,
     since: str | None = None,
+    posted_since: str | None = None,
     limit: int = 50,
     offset: int = 0,
     view: str = "active",
@@ -60,10 +93,13 @@ async def get_jobs(
     max_exp: int | None = None,
 ):
     limit = min(limit, 200)
+    companies = [c for c in company.split(",") if c] if company else None
+    sources = [s for s in source.split(",") if s] if source else None
     conn = get_db()
     try:
         jobs, total = query_jobs(
-            conn, company=company, title_keyword=title, since=since,
+            conn, companies=companies, sources=sources, title_keyword=title,
+            since=since, posted_since=posted_since,
             limit=limit, offset=offset, view=view, sort=sort, max_exp=max_exp,
         )
     finally:
@@ -81,6 +117,108 @@ async def set_job_status(job_id: int, body: StatusUpdate):
     if not ok:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/fetch-jd", response_model=JDResponse)
+async def fetch_jd(job_id: int):
+    conn = get_db()
+    try:
+        job = get_job(conn, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.get("full_description"):
+            return {"ok": True, "full_description": job["full_description"],
+                    "detail_fetched_at": job.get("detail_fetched_at")}
+        text = await fetch_job_detail(job)
+        if not text:
+            return {"ok": False, "error": "Could not fetch a job description for this source."}
+        set_job_detail(conn, job_id, text)
+        row = get_job(conn, job_id)
+        return {"ok": True, "full_description": text,
+                "detail_fetched_at": row.get("detail_fetched_at")}
+    finally:
+        conn.close()
+
+
+@app.post("/api/jobs/{job_id}/tailor-resume", response_model=TailorResponse)
+async def tailor_resume(job_id: int):
+    conn = get_db()
+    try:
+        job = get_job(conn, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        jd = job.get("full_description")
+        if not jd:
+            jd = await fetch_job_detail(job)
+            if jd:
+                set_job_detail(conn, job_id, jd)
+        if not jd:
+            return {"ok": False, "error": "No job description available — fetch the JD first."}
+        try:
+            pdf_path = await asyncio.to_thread(tailor_resume_for_job, job_id, jd)
+        except ResumeError as e:
+            return {"ok": False, "error": str(e), "compile_log": e.log}
+        set_resume_path(conn, job_id, str(pdf_path))
+        return {"ok": True, "resume_url": f"/api/jobs/{job_id}/resume"}
+    finally:
+        conn.close()
+
+
+@app.get("/api/jobs/{job_id}/resume")
+async def download_resume(job_id: int):
+    conn = get_db()
+    try:
+        job = get_job(conn, job_id)
+    finally:
+        conn.close()
+    if not job or not job.get("resume_path") or not Path(job["resume_path"]).exists():
+        raise HTTPException(status_code=404, detail="No resume generated yet")
+    return FileResponse(job["resume_path"], media_type="application/pdf",
+                        filename=f"resume_{job_id}.pdf")
+
+
+@app.post("/api/jobs/manual", response_model=JobResponse)
+async def add_manual_job(body: ManualJob):
+    conn = get_db()
+    try:
+        data = body.model_dump()
+        if not data.get("job_url"):
+            slug = re.sub(r"[^a-z0-9]+", "-", f"{data['company_name']}-{data['job_title']}".lower()).strip("-")
+            data["job_url"] = f"manual://{slug}-{uuid4().hex[:8]}"
+        new_id = insert_manual_job(conn, data)
+        return get_job(conn, new_id)
+    finally:
+        conn.close()
+
+
+@app.post("/api/jobs/{job_id}/queue")
+async def add_to_queue(job_id: int):
+    conn = get_db()
+    try:
+        if not set_job_queued(conn, job_id, True):
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/jobs/{job_id}/queue")
+async def remove_from_queue(job_id: int):
+    conn = get_db()
+    try:
+        set_job_queued(conn, job_id, False)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/queue")
+async def list_queue():
+    conn = get_db()
+    try:
+        return {"jobs": get_queued_jobs(conn)}
+    finally:
+        conn.close()
 
 
 @app.get("/api/companies")

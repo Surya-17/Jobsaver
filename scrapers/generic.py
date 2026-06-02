@@ -13,6 +13,9 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# Max results to page through per Workday search title (API caps each request at 20).
+WORKDAY_MAX = 100
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -146,22 +149,33 @@ async def _scrape_workday_api(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
 
+    # Workday caps each request at 20 results; page through up to WORKDAY_MAX per title.
     for title in search_titles:
-        payload = {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": title}
-        try:
-            async with session.post(
-                api_url, json=payload, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning("[Workday] %s HTTP %d for title=%s", company_cfg["company_name"], resp.status, title)
-                    continue
-                data = await resp.json(content_type=None)
-        except Exception as exc:
-            logger.error("[Workday] %s %s: %s", company_cfg["company_name"], title, exc)
-            continue
+        postings: list[dict] = []
+        offset = 0
+        while offset < WORKDAY_MAX:
+            payload = {"appliedFacets": {}, "limit": 20, "offset": offset, "searchText": title}
+            try:
+                async with session.post(
+                    api_url, json=payload, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning("[Workday] %s HTTP %d for title=%s", company_cfg["company_name"], resp.status, title)
+                        break
+                    data = await resp.json(content_type=None)
+            except Exception as exc:
+                logger.error("[Workday] %s %s: %s", company_cfg["company_name"], title, exc)
+                break
 
-        for raw in data.get("jobPostings", []):
+            page = data.get("jobPostings", [])
+            postings.extend(page)
+            total = data.get("total", 0)
+            offset += 20
+            if offset >= total or not page:
+                break
+
+        for raw in postings:
             job_title = raw.get("title", "")
             matched, keyword = _title_matches(job_title, [title])
             if not matched:
@@ -441,6 +455,9 @@ async def scrape_company(
         return await _scrape_workday_api(session, company_cfg, search_titles)
     if ats == "ashby":
         return await _scrape_ashby(session, company_cfg, search_titles)
+    if ats == "oracle":
+        from scrapers.oracle import _scrape_oracle_api
+        return await _scrape_oracle_api(session, company_cfg, search_titles)
 
     if playwright_browser is None:
         logger.warning("[Generic] No Playwright browser for %s, skipping", company_cfg["company_name"])

@@ -36,7 +36,8 @@ function reformatDates() {
 }
 
 function atsClass(type) {
-  const known = ['greenhouse', 'workday', 'generic', 'amazon', 'apple', 'microsoft', 'ashby'];
+  const known = ['greenhouse', 'workday', 'generic', 'amazon', 'apple', 'microsoft', 'ashby',
+                 'oracle', 'jobspy', 'indeed', 'linkedin', 'glassdoor', 'google', 'zip_recruiter', 'manual'];
   return known.includes(type) ? `ats-${type}` : 'ats-generic';
 }
 
@@ -67,14 +68,18 @@ function renderCard(job) {
     ? `<span class="status-pill resume_modify">Modify Resume</span>`
     : '';
 
+  const queueBtn = currentView === 'skipped' ? '' : (job.queued
+    ? `<button class="queue-btn" disabled>✓ Queued</button>`
+    : `<button class="queue-btn" data-id="${job.id}" onclick="addToQueue(${job.id}, this)" title="Add to tailor queue">＋ Queue</button>`);
+
   return `
     <div class="job-card" data-id="${job.id}" data-status="${escHtml(job.status || '')}">
       <div class="job-card-top">
         <span class="company-badge">${escHtml(job.company_name)}</span>
-        <span class="ats-badge ${atsClass(job.ats_type)}">${escHtml(job.ats_type || '')}</span>
+        <span class="ats-badge ${atsClass(job.source)}">${escHtml(job.source || '')}</span>
         ${expBadge(job.years_exp)}
         ${pill}
-        <div class="job-actions">${actions}</div>
+        <div class="job-actions">${queueBtn}${actions}</div>
       </div>
       <h3 class="job-title">
         <a href="${escHtml(job.job_url)}" target="_blank" rel="noopener">${escHtml(job.job_title)}</a>
@@ -99,9 +104,11 @@ function escHtml(str) {
 
 async function fetchJobs(append = false) {
   const params = new URLSearchParams({ limit: PAGE_SIZE, offset: currentOffset, sort: currentSort, view: currentView });
-  if (currentFilters.company) params.set('company', currentFilters.company);
-  if (currentFilters.title)   params.set('title',   currentFilters.title);
-  if (currentFilters.since)   params.set('since',   currentFilters.since);
+  if (currentFilters.companies?.length) params.set('company', currentFilters.companies.join(','));
+  if (currentFilters.sources?.length)   params.set('source',  currentFilters.sources.join(','));
+  if (currentFilters.title)        params.set('title', currentFilters.title);
+  if (currentFilters.since)        params.set('since', currentFilters.since);
+  if (currentFilters.postedSince)  params.set('posted_since', currentFilters.postedSince);
   if (currentFilters.maxExp != null) params.set('max_exp', currentFilters.maxExp);
 
   const res = await fetch(`/api/jobs?${params}`);
@@ -242,22 +249,38 @@ async function restoreJob(jobId) {
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 
+function msValues(name) {
+  return [...document.querySelectorAll(`.multiselect[data-name="${name}"] .ms-item input:checked`)]
+    .map(i => i.value);
+}
+
+function filterMsOptions(input) {
+  const q = input.value.toLowerCase();
+  input.closest('.multiselect').querySelectorAll('.ms-item').forEach(item => {
+    item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
 function applyFilters() {
   const maxExpVal = document.getElementById('f-max-exp').value;
   currentFilters = {
-    company: document.getElementById('f-company').value,
-    title:   document.getElementById('f-title').value,
-    since:   document.getElementById('f-since').value,
-    maxExp:  maxExpVal ? parseInt(maxExpVal) : null,
+    companies:   msValues('company'),
+    sources:     msValues('source'),
+    title:       document.getElementById('f-title').value,
+    since:       document.getElementById('f-found-since').value,
+    postedSince: document.getElementById('f-posted-since').value,
+    maxExp:      maxExpVal ? parseInt(maxExpVal) : null,
   };
   currentOffset = 0;
   fetchJobs();
 }
 
 function clearFilters() {
-  document.getElementById('f-company').value = '';
+  document.querySelectorAll('.multiselect input[type="checkbox"]').forEach(c => { c.checked = false; });
+  document.querySelectorAll('.multiselect .ms-search').forEach(s => { s.value = ''; filterMsOptions(s); });
   document.getElementById('f-title').value = '';
-  document.getElementById('f-since').value = '';
+  document.getElementById('f-found-since').value = '';
+  document.getElementById('f-posted-since').value = '';
   document.getElementById('f-max-exp').value = '';
   currentFilters = { maxExp: null };
   currentOffset = 0;
@@ -267,6 +290,93 @@ function clearFilters() {
 function loadMore() {
   currentOffset += PAGE_SIZE;
   fetchJobs(true);
+}
+
+// ── Tailor queue ───────────────────────────────────────────────────────────────
+
+async function fetchQueue() {
+  const res = await fetch('/api/queue');
+  const data = await res.json();
+  document.getElementById('queue-count').textContent = data.jobs.length;
+  const list = document.getElementById('queue-list');
+  list.innerHTML = data.jobs.length
+    ? data.jobs.map(renderQueueItem).join('')
+    : '<p class="queue-empty">Add jobs with ＋ Queue to tailor resumes here.</p>';
+}
+
+function renderQueueItem(job) {
+  const jd = job.full_description
+    ? `<span class="queue-flag ok">JD ✓</span>`
+    : `<button class="queue-mini" onclick="fetchJd(${job.id}, this)">Fetch JD</button>`;
+  const resume = job.resume_path
+    ? `<a class="queue-mini" href="/api/jobs/${job.id}/resume" target="_blank">⬇ Resume</a>`
+    : `<button class="queue-mini" onclick="tailorResume(${job.id}, this)">Tailor Resume</button>`;
+  const applied = job.status === 'applied'
+    ? `<span class="status-pill applied">Applied</span>`
+    : `<button class="queue-mini" onclick="markApplied(${job.id})">Mark Applied</button>`;
+  return `
+    <div class="queue-item" data-id="${job.id}">
+      <div class="queue-item-top">
+        <span class="ats-badge ${atsClass(job.source)}">${escHtml(job.source || '')}</span>
+        <button class="queue-remove" onclick="removeFromQueue(${job.id})" title="Remove">✕</button>
+      </div>
+      <a class="queue-title" href="${escHtml(job.job_url)}" target="_blank" rel="noopener">${escHtml(job.job_title)}</a>
+      <div class="queue-company">${escHtml(job.company_name)}</div>
+      <div class="queue-actions">${jd} ${resume} ${applied}</div>
+      <div class="queue-msg"></div>
+    </div>`;
+}
+
+async function addToQueue(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '✓ Queued'; }
+  await fetch(`/api/jobs/${id}/queue`, { method: 'POST' });
+  fetchQueue();
+}
+
+async function removeFromQueue(id) {
+  await fetch(`/api/jobs/${id}/queue`, { method: 'DELETE' });
+  fetchQueue();
+  // Re-enable the list card's queue button if visible.
+  const cardBtn = document.querySelector(`.job-card[data-id="${id}"] .queue-btn`);
+  if (cardBtn) { cardBtn.disabled = false; cardBtn.textContent = '＋ Queue'; }
+}
+
+function queueMsg(id, text, isErr = false, log = null) {
+  const el = document.querySelector(`.queue-item[data-id="${id}"] .queue-msg`);
+  if (!el) return;
+  el.className = 'queue-msg' + (isErr ? ' err' : '');
+  el.textContent = text;
+  if (log) {
+    const pre = document.createElement('details');
+    pre.innerHTML = `<summary>compile log</summary><pre>${escHtml(log)}</pre>`;
+    el.appendChild(pre);
+  }
+}
+
+async function fetchJd(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const r = await fetch(`/api/jobs/${id}/fetch-jd`, { method: 'POST' }).then(r => r.json());
+  if (r.ok) fetchQueue();
+  else { queueMsg(id, r.error || 'JD fetch failed', true); if (btn) { btn.disabled = false; btn.textContent = 'Fetch JD'; } }
+}
+
+async function tailorResume(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Tailoring…'; }
+  const r = await fetch(`/api/jobs/${id}/tailor-resume`, { method: 'POST' }).then(r => r.json());
+  if (r.ok) fetchQueue();
+  else {
+    queueMsg(id, r.error || 'Tailoring failed', true, r.compile_log);
+    if (btn) { btn.disabled = false; btn.textContent = 'Tailor Resume'; }
+  }
+}
+
+async function markApplied(id) {
+  await fetch(`/api/jobs/${id}/status`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'applied' }),
+  });
+  fetchQueue();
+  fetchStats();
 }
 
 // ── Scrape trigger ────────────────────────────────────────────────────────────
@@ -356,11 +466,19 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(applyFilters, 300);
   });
-  document.getElementById('f-company').addEventListener('change', applyFilters);
-  document.getElementById('f-since').addEventListener('change', applyFilters);
+  // Multi-selects: debounce so toggling several boxes batches into one fetch.
+  document.querySelectorAll('.multiselect .ms-list').forEach(list => {
+    list.addEventListener('change', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(applyFilters, 400);
+    });
+  });
+  document.getElementById('f-found-since').addEventListener('change', applyFilters);
+  document.getElementById('f-posted-since').addEventListener('change', applyFilters);
   document.getElementById('f-max-exp').addEventListener('change', applyFilters);
 
   fetchStats();
+  fetchQueue();
   reformatDates();
 
   // Resume polling if scrape is already running on page load

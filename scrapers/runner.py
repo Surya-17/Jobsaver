@@ -4,6 +4,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from functools import lru_cache
 
 import aiohttp
 
@@ -16,6 +17,12 @@ from scrapers.exp_parser import infer_exp
 logger = logging.getLogger(__name__)
 
 _scrape_lock = asyncio.Lock()
+
+
+@lru_cache(maxsize=1)
+def _have_llm_key() -> bool:
+    from scrapers.llm import have_key
+    return have_key()
 
 _NON_US = [
     "india", "uk", "united kingdom", "canada", "australia", "germany",
@@ -31,6 +38,19 @@ _NON_US = [
     "istanbul", "israel", "tel aviv", "south korea", "seoul", "taiwan",
     "taipei", "hong kong", "dubai", "uae", "russia", "moscow",
 ]
+
+# US state codes (for "City, ST" listings) + explicit US tokens. A multi-location
+# role that names the US/Americas should survive even if it also lists foreign cities.
+_US_STATE = (
+    "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|"
+    "MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|"
+    "VT|VA|WA|WV|WI|WY|DC"
+)
+_US_SIGNAL = re.compile(
+    r'\b(?:u\.?s\.?a?\.?|united\s+states|americas)\b'
+    r'|,\s*(?:' + _US_STATE + r')\b',
+    re.IGNORECASE,
+)
 
 # Titles that strongly signal director-level+ (typically 8-10+ yrs required)
 _SENIOR_PAT = re.compile(
@@ -50,6 +70,9 @@ _NON_FULLTIME_PAT = re.compile(
 def _is_us_location(location: str, job_url: str = "") -> bool:
     check = (location + " " + job_url).lower()
     if not check.strip():
+        return True
+    # An explicit US/Americas signal keeps multi-region roles that also list foreign cities.
+    if _US_SIGNAL.search(location):
         return True
     return not any(kw in check for kw in _NON_US)
 
@@ -180,13 +203,20 @@ async def _scrape_one(
                 jobs = await fetch_greenhouse_jobs(session, company_cfg, search_titles)
             elif ats == "generic":
                 # Generic pages are JS-heavy SPAs — run sync Playwright in thread pool
-                # to avoid Windows ProactorEventLoop subprocess limitation
-                jobs = await asyncio.get_event_loop().run_in_executor(
-                    executor,
-                    _run_playwright_company_sync,
-                    company_cfg,
-                    search_titles,
-                )
+                # to avoid Windows ProactorEventLoop subprocess limitation.
+                loop = asyncio.get_event_loop()
+                jobs = []
+                # LLM-driven API discovery first (handles SPAs the anchor scraper can't);
+                # fall back to the anchor scraper if it finds nothing or no key is set.
+                if _have_llm_key():
+                    from scrapers.autodiscover import scrape_company_autodiscover
+                    jobs = await loop.run_in_executor(
+                        executor, scrape_company_autodiscover, company_cfg, search_titles,
+                    )
+                if not jobs:
+                    jobs = await loop.run_in_executor(
+                        executor, _run_playwright_company_sync, company_cfg, search_titles,
+                    )
             else:
                 # amazon, workday → async JSON API scrapers (no Playwright needed)
                 jobs = await scrape_company(session, None, company_cfg, search_titles)
@@ -202,6 +232,27 @@ async def _scrape_one(
         except Exception as exc:
             logger.error("[Runner] %s failed: %s", company_cfg["company_name"], exc)
             return 0, 0, str(exc)
+
+
+async def _scrape_jobspy(
+    executor: ThreadPoolExecutor,
+    search_titles: list[str],
+    db_conn,
+) -> tuple[int, int, str | None]:
+    """Run the JobSpy aggregator source in the thread pool and store results."""
+    from scrapers.jobspy_source import fetch_jobspy_jobs
+
+    try:
+        jobs = await asyncio.get_event_loop().run_in_executor(
+            executor, fetch_jobspy_jobs, search_titles
+        )
+        jobs = [j for j in jobs if _is_us_location(j.get("location", ""), j.get("job_url", ""))
+                and _is_eligible(j.get("job_title", ""))]
+        new_count = sum(1 for job in jobs if insert_job(db_conn, job))
+        return new_count, len(jobs) - new_count, None
+    except Exception as exc:
+        logger.error("[Runner] JobSpy source failed: %s", exc)
+        return 0, 0, str(exc)
 
 
 async def run_scrape(
@@ -246,6 +297,14 @@ async def run_scrape(
             total_updated += updated
             if err:
                 errors.append({"company": company["company_name"], "error": err})
+
+        # Aggregator source — only on a full scrape (not single-company or test runs).
+        if not company_filter and not test_mode:
+            js_new, js_updated, js_err = await _scrape_jobspy(executor, search_titles, db_conn)
+            total_new += js_new
+            total_updated += js_updated
+            if js_err:
+                errors.append({"company": "JobSpy", "error": js_err})
 
     finally:
         executor.shutdown(wait=False)

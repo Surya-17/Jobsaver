@@ -32,6 +32,7 @@
       <button id="skipped-btn" class="btn-secondary" onclick="setView('skipped')">
         Skipped (<span id="skipped-count">0</span>)
       </button>
+      <a class="btn-secondary" href="/dashboard">Applied ✓</a>
       <div id="scrape-msg" class="scrape-msg"></div>
     </div>
   </header>
@@ -41,19 +42,34 @@
     <aside class="sidebar">
       <h2>Filters</h2>
       <form id="filter-form" onsubmit="return false;">
-        <label for="f-company">Company</label>
-        <select id="f-company" name="company">
-          <option value="">All companies</option>
-          {% for c in companies %}
-          <option value="{{ c }}">{{ c }}</option>
-          {% endfor %}
-        </select>
+        <label>Company</label>
+        <div class="multiselect" data-name="company">
+          <input type="text" class="ms-search" placeholder="Search companies…" oninput="filterMsOptions(this)" />
+          <div class="ms-list">
+            {% for c in companies %}
+            <label class="ms-item"><input type="checkbox" value="{{ c }}" /> <span>{{ c }}</span></label>
+            {% endfor %}
+          </div>
+        </div>
+
+        <label>Source</label>
+        <div class="multiselect" data-name="source">
+          <input type="text" class="ms-search" placeholder="Search sources…" oninput="filterMsOptions(this)" />
+          <div class="ms-list">
+            {% for s in sources %}
+            <label class="ms-item"><input type="checkbox" value="{{ s }}" /> <span>{{ s }}</span></label>
+            {% endfor %}
+          </div>
+        </div>
 
         <label for="f-title">Job title</label>
         <input id="f-title" name="title" type="text" placeholder="e.g. Software Engineer" />
 
-        <label for="f-since">Posted since</label>
-        <input id="f-since" name="since" type="date" />
+        <label for="f-found-since">Found since</label>
+        <input id="f-found-since" name="found_since" type="date" />
+
+        <label for="f-posted-since">Posted since</label>
+        <input id="f-posted-since" name="posted_since" type="date" />
 
         <label for="f-max-exp">Max experience</label>
         <select id="f-max-exp" name="max_exp">
@@ -86,10 +102,14 @@
         <div class="job-card" data-id="{{ job.id }}" data-status="{{ job.status or '' }}">
           <div class="job-card-top">
             <span class="company-badge">{{ job.company_name }}</span>
-            <span class="ats-badge ats-{{ job.ats_type }}">{{ job.ats_type }}</span>
+            <span class="ats-badge ats-{{ job.source }}">{{ job.source }}</span>
             {% if job.status == 'applied' %}<span class="status-pill applied">Applied</span>
             {% elif job.status == 'resume_modify' %}<span class="status-pill resume_modify">Modify Resume</span>{% endif %}
             <div class="job-actions">
+              <button class="queue-btn" data-id="{{ job.id }}" onclick="addToQueue({{ job.id }}, this)"
+                      {% if job.queued %}disabled{% endif %} title="Add to tailor queue">
+                {% if job.queued %}✓ Queued{% else %}＋ Queue{% endif %}
+              </button>
               <select class="status-select" data-id="{{ job.id }}" onchange="handleStatusChange(this)">
                 <option value="" {% if not job.status %}selected{% endif %}>Actions ▾</option>
                 <option value="applied" {% if job.status == 'applied' %}selected{% endif %}>Applied</option>
@@ -123,6 +143,12 @@
         {% endif %}
       </div>
     </main>
+
+    <!-- Tailor queue -->
+    <aside class="queue-panel">
+      <h2>Tailor Queue (<span id="queue-count">0</span>)</h2>
+      <div id="queue-list"></div>
+    </aside>
   </div>
 
   <div id="undo-toast" class="undo-toast">

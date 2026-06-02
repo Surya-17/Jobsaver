@@ -1,0 +1,36 @@
+% Example base resume. Copy to base_resume.tex (or replace with your own LaTeX).
+% The tailoring step preserves \documentclass and \usepackage lines; it only
+% rewords/reorders content to match each job description.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+
+\begin{document}
+\begin{center}
+  {\LARGE \textbf{Your Name}}\\
+  your.email@example.com $\cdot$ City, ST $\cdot$ github.com/you
+\end{center}
+
+\section{Summary}
+Data engineer with experience building batch and streaming pipelines.
+
+\section{Experience}
+\textbf{Data Engineer}, Example Corp \hfill 2023--Present
+\begin{itemize}[leftmargin=*]
+  \item Built ETL pipelines in Python processing 10M+ records/day.
+  \item Designed a Snowflake warehouse and dbt models for analytics.
+\end{itemize}
+
+\textbf{Software Engineer}, Another Co \hfill 2021--2023
+\begin{itemize}[leftmargin=*]
+  \item Developed REST APIs in FastAPI serving 5k req/s.
+\end{itemize}
+
+\section{Skills}
+Python, SQL, Spark, Airflow, dbt, Snowflake, AWS.
+
+\section{Education}
+B.S. Computer Science, State University, 2021.
+\end{document}

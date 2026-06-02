@@ -4,3 +4,7 @@ __pycache__/
 *.db
 .env
 *.png
+output/
+autodiscover_plans.json
+# Your real resume stays local — only the .example template is tracked.
+resume/base_resume.tex

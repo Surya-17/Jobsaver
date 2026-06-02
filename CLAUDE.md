@@ -63,3 +63,49 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+# Project map (Jobsaver)
+
+A FastAPI + SQLite + vanilla-JS web app that scrapes Data/AI Engineer jobs, lets you
+tailor a LaTeX resume per job (local LLM → PDF), and tracks applications. Single
+SQLite DB (`jobs.db`), no ORM, no build step.
+
+## Run
+- `python main.py` → uvicorn on http://localhost:8000 (run from a terminal where PATH
+  includes Tectonic). `/` = job list + filters + tailor queue; `/dashboard` = applied tracker.
+- Scrape: `POST /scrape` (button in UI) runs all enabled company scrapers + JobSpy.
+
+## Layout
+- `main.py` — FastAPI routes (pages + `/api/*`). `config.py` — `COMPANIES` list + `SEARCH_TITLES`.
+- `database.py` — schema, `MIGRATIONS` (ALTER TABLE in try/except — add columns here), all
+  `jobs`-table queries/helpers. `models.py` — Pydantic responses.
+- `scrapers/` — `runner.py` (orchestrates), `greenhouse.py`, `generic.py` (workday/amazon/ashby
+  APIs + Playwright fallback), `oracle.py`, `jobspy_source.py` (Indeed/LinkedIn via JobSpy),
+  `autodiscover.py` (LLM-driven generic SPA scraper, plan-cached in `autodiscover_plans.json`),
+  `detail.py` (on-demand full JD fetch), `llm.py` (Gemini client for scraping).
+- `resume.py` (tailor LaTeX + compile) · `tailor_client.py` (OpenAI-compatible LLM, Ollama).
+- `templates/` (index.html, dashboard.html) · `static/` (app.js, style.css).
+
+## Key facts / gotchas
+- **Scraping LLM** = Gemini (`.env` GEMINI_API_KEY, model `gemini-3.1-flash-lite`). Used only by
+  `autodiscover.py`, plan-cached so it rarely calls the API. Gemini free quotas are per-model.
+- **Tailoring LLM** = local Ollama `qwen3:8b` via OpenAI-compatible API (`.env` TAILOR_BASE_URL/
+  TAILOR_API_KEY/TAILOR_MODEL). Separate from scraping. Needs `ollama serve` running. First
+  tailor ~90s (cold VRAM load + Qwen3 thinking mode); warm runs faster.
+- **LaTeX** = Tectonic at `%LOCALAPPDATA%\Programs\Tectonic` (on user PATH). Engine call isolated
+  in `resume._run_tectonic` (swap there to change engines). Base resume: `resume/base_resume.tex`
+  (user-provided; example at `resume/base_resume.example.tex`). Instructions: `resume/instructions.md`.
+- **Job sources**: `ats_type` is the scraper backend; the UI "source" badge is derived
+  (`database._job_source`): JobSpy rows show their board (linkedin/indeed), others show ats_type.
+- **Location/eligibility filters** live in `scrapers/runner.py` (`_is_us_location`, `_is_eligible`).
+- **`output/`, `*.db`, `.env`, `autodiscover_plans.json`** are gitignored.
+- Generated resumes: `output/resumes/{job_id}/resume.pdf`; path stored on the row (`resume_path`).
+
+## State (built; verified end-to-end)
+Discovery (company ATS + JobSpy + LLM autodiscover), filters (company multiselect/search, source,
+found/posted dates, max-exp), on-demand JD fetch, resume tailoring (Ollama→Tectonic→PDF), tailor
+queue (right panel), applied dashboard, manual job entry. Workday detail JD-fetch may 403 from some
+IPs (graceful fallback). ~37 "generic" SPA companies still return little directly — JobSpy covers
+those employers anyway.

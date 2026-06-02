@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Applied — Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Applied Dashboard</h1>
+      <div class="stats">Tracking everything you've applied to.</div>
+    </div>
+    <div class="header-right">
+      <a class="btn-secondary" href="/">← Jobs</a>
+      <button class="btn-primary" onclick="openManual()">＋ Add manual job</button>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <div class="dashboard-grid">
+      <div class="stat-card"><div class="stat-num">{{ stats.total }}</div><div class="stat-label">Total applied</div></div>
+      <div class="stat-card"><div class="stat-num">{{ stats.by_company|length }}</div><div class="stat-label">Companies</div></div>
+      <div class="stat-card"><div class="stat-num">{{ this_week }}</div><div class="stat-label">This week</div></div>
+    </div>
+
+    <table class="applied-table">
+      <thead>
+        <tr><th>Company</th><th>Title</th><th>Applied</th><th>Source</th><th>Posting</th><th>Resume</th></tr>
+      </thead>
+      <tbody>
+        {% for job in applied %}
+        <tr>
+          <td>{{ job.company_name }}</td>
+          <td>{{ job.job_title }}</td>
+          <td class="applied-date" data-iso="{{ job.applied_at or '' }}">{{ (job.applied_at or '')[:10] }}</td>
+          <td><span class="ats-badge ats-{{ job.source }}">{{ job.source }}</span></td>
+          <td>{% if job.job_url and not job.job_url.startswith('manual://') %}<a href="{{ job.job_url }}" target="_blank" rel="noopener">link</a>{% else %}—{% endif %}</td>
+          <td>{% if job.resume_path %}<a href="/api/jobs/{{ job.id }}/resume" target="_blank">⬇ PDF</a>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+        {% if not applied %}
+        <tr><td colspan="6" class="empty">No applications yet. Mark jobs as Applied or add one manually.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+
+    <div class="dashboard-breakdowns">
+      <div class="breakdown">
+        <h3>By company</h3>
+        {% for c in stats.by_company %}<div class="breakdown-row"><span>{{ c.company }}</span><span>{{ c.count }}</span></div>{% endfor %}
+      </div>
+      <div class="breakdown">
+        <h3>By week</h3>
+        {% for w in stats.by_week %}<div class="breakdown-row"><span>{{ w.week }}</span><span>{{ w.count }}</span></div>{% endfor %}
+      </div>
+    </div>
+  </main>
+
+  <!-- Manual job modal -->
+  <div id="manual-modal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+      <h2>Add a job you applied to elsewhere</h2>
+      <label>Company *</label><input id="m-company" type="text" />
+      <label>Job title *</label><input id="m-title" type="text" />
+      <label>URL (optional)</label><input id="m-url" type="text" placeholder="https://…" />
+      <label>Location (optional)</label><input id="m-location" type="text" />
+      <label>Notes (optional)</label><textarea id="m-notes" rows="2"></textarea>
+      <div id="manual-err" class="modal-err"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeManual()">Cancel</button>
+        <button class="btn-primary" onclick="submitManualJob()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function openManual() { document.getElementById('manual-modal').style.display = 'flex'; }
+    function closeManual() { document.getElementById('manual-modal').style.display = 'none'; }
+
+    async function submitManualJob() {
+      const company = document.getElementById('m-company').value.trim();
+      const title = document.getElementById('m-title').value.trim();
+      const err = document.getElementById('manual-err');
+      if (!company || !title) { err.textContent = 'Company and title are required.'; return; }
+      const body = {
+        company_name: company, job_title: title,
+        job_url: document.getElementById('m-url').value.trim() || null,
+        location: document.getElementById('m-location').value.trim() || null,
+        notes: document.getElementById('m-notes').value.trim() || null,
+      };
+      const res = await fetch('/api/jobs/manual', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (res.ok) { closeManual(); location.reload(); }
+      else { err.textContent = 'Failed to add job.'; }
+    }
+
+    // Localize applied dates
+    document.querySelectorAll('.applied-date[data-iso]').forEach(el => {
+      if (el.dataset.iso) el.textContent = new Date(el.dataset.iso).toLocaleDateString('en-US',
+        { year: 'numeric', month: 'short', day: 'numeric' });
+    });
+  </script>
+</body>
+</html>
