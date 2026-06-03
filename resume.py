@@ -4,6 +4,7 @@ The LLM call goes through tailor_client (local Ollama by default). The LaTeX is
 compiled by Tectonic, isolated in _run_tectonic so the engine can be swapped.
 """
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,10 +13,17 @@ import tailor_client
 
 logger = logging.getLogger(__name__)
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 BASE = Path(__file__).parent
 BASE_RESUME = BASE / "resume" / "base_resume.tex"
 INSTRUCTIONS = BASE / "resume" / "instructions.md"
-OUTPUT_DIR = Path(r"E:\Jobs\AI Resumes\Jobsaver Resumes")
+# Where tailored resumes are written. Override with RESUME_OUTPUT_DIR in .env.
+OUTPUT_DIR = Path(os.environ.get("RESUME_OUTPUT_DIR") or (BASE / "output" / "resumes"))
 
 _DEFAULT_INSTRUCTIONS = (
     "Tailor the resume to the job description: reorder and reword bullet points to "
