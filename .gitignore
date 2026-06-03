@@ -6,5 +6,7 @@ __pycache__/
 *.png
 output/
 autodiscover_plans.json
-# Your real resume stays local — only the .example template is tracked.
+# Your real resume + tailoring instructions stay local — only the .example files are tracked.
 resume/base_resume.tex
+resume/instructions.md
+resume_tailoring_prompt_instructions.md
