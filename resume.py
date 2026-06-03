@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 BASE = Path(__file__).parent
 BASE_RESUME = BASE / "resume" / "base_resume.tex"
 INSTRUCTIONS = BASE / "resume" / "instructions.md"
-OUTPUT_DIR = BASE / "output" / "resumes"
+OUTPUT_DIR = Path(r"E:\Jobs\AI Resumes\Jobsaver Resumes")
 
 _DEFAULT_INSTRUCTIONS = (
     "Tailor the resume to the job description: reorder and reword bullet points to "
@@ -31,21 +31,54 @@ class ResumeError(Exception):
         self.log = log
 
 
-def _build_prompt(base_tex: str, jd: str, instructions: str) -> str:
+_BEGIN = r"\begin{document}"
+_END = r"\end{document}"
+
+
+def _split_document(base_tex: str) -> tuple[str, str]:
+    """Return (preamble_incl_begin, body). Preamble keeps \\documentclass, all
+    packages, and custom \\newcommand definitions — the model never touches it."""
+    b = base_tex.find(_BEGIN)
+    e = base_tex.rfind(_END)
+    if b == -1 or e == -1 or e < b:
+        raise ResumeError(
+            r"Base resume must contain \begin{document} and \end{document}.")
+    preamble = base_tex[: b + len(_BEGIN)]
+    body = base_tex[b + len(_BEGIN) : e]
+    return preamble, body
+
+
+def _extract_body(model_out: str) -> str:
+    """The model is asked for a body fragment, but be defensive: if it wrapped
+    the answer in a full document, keep only what's between the markers."""
+    out = model_out
+    if _BEGIN in out:
+        out = out.split(_BEGIN, 1)[1]
+    if _END in out:
+        out = out.split(_END, 1)[0]
+    return out.strip()
+
+
+def _build_prompt(base_body: str, jd: str, instructions: str) -> str:
     return (
         "You are an expert resume editor working in LaTeX.\n"
-        "Given a base resume (LaTeX), a target job description, and instructions, "
-        "produce a tailored version.\n\n"
+        "You are given the BODY of a resume (the content between "
+        "\\begin{document} and \\end{document}), a target job description, and "
+        "instructions. Produce a tailored version of the body.\n\n"
         "Rules:\n"
-        "- Output ONLY a complete, compilable LaTeX document — no commentary, no markdown.\n"
-        "- Preserve the original \\documentclass and all \\usepackage lines exactly.\n"
+        "- Output ONLY the tailored body LaTeX — no commentary, no markdown fences.\n"
+        "- Do NOT output \\documentclass, \\usepackage, \\newcommand, "
+        "\\begin{document}, or \\end{document}. The preamble is fixed and added "
+        "separately.\n"
+        "- Use ONLY commands that already appear in the body below (e.g. "
+        "\\resumeSubheading, \\resumeItem, \\faPhone). Do not invent new commands.\n"
         "- Do not fabricate any experience, skills, employers, or dates.\n"
         f"- {instructions}\n\n"
         "=== JOB DESCRIPTION ===\n"
         f"{jd[:12000]}\n\n"
-        "=== BASE RESUME (LaTeX) ===\n"
-        f"{base_tex}\n\n"
-        "=== TAILORED RESUME (LaTeX only) ==="
+        "=== RESUME BODY (LaTeX) ===\n"
+        f"{base_body}\n\n"
+        "=== TAILORED BODY (LaTeX only) ==="
     )
 
 
@@ -53,15 +86,17 @@ def generate_tailored_latex(jd: str, *, model: str | None = None) -> str:
     if not BASE_RESUME.exists():
         raise ResumeError(f"Base resume not found at {BASE_RESUME}. Add your resume/base_resume.tex.")
     base_tex = BASE_RESUME.read_text(encoding="utf-8")
+    preamble, base_body = _split_document(base_tex)
     instructions = (INSTRUCTIONS.read_text(encoding="utf-8")
                     if INSTRUCTIONS.exists() else _DEFAULT_INSTRUCTIONS)
     try:
-        latex = tailor_client.chat(_build_prompt(base_tex, jd, instructions), model=model)
+        raw = tailor_client.chat(_build_prompt(base_body, jd, instructions), model=model)
     except Exception as exc:
         raise ResumeError(f"LLM request failed: {exc}. Is Ollama running (ollama serve)?")
-    if "\\documentclass" not in latex:
-        raise ResumeError("Model did not return a valid LaTeX document.", log=latex[:2000])
-    return latex
+    body = _extract_body(raw)
+    if not body:
+        raise ResumeError("Model returned an empty resume body.", log=raw[:2000])
+    return f"{preamble}\n{body}\n{_END}\n"
 
 
 def _run_tectonic(tex_path: Path, out_dir: Path) -> Path:
