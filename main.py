@@ -155,7 +155,8 @@ async def tailor_resume(job_id: int):
         if not jd:
             return {"ok": False, "error": "No job description available — fetch the JD first."}
         try:
-            pdf_path = await asyncio.to_thread(tailor_resume_for_job, job_id, jd)
+            pdf_path = await asyncio.to_thread(
+                tailor_resume_for_job, job_id, jd, job["company_name"])
         except ResumeError as e:
             return {"ok": False, "error": str(e), "compile_log": e.log}
         set_resume_path(conn, job_id, str(pdf_path))

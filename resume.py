@@ -5,8 +5,10 @@ compiled by Tectonic, isolated in _run_tectonic so the engine can be swapped.
 """
 import logging
 import os
+import re
 import shutil
 import subprocess
+from datetime import date
 from pathlib import Path
 
 import tailor_client
@@ -125,14 +127,25 @@ def _run_tectonic(tex_path: Path, out_dir: Path) -> Path:
     return pdf
 
 
-def compile_pdf(tex_source: str, out_dir: Path) -> Path:
+def compile_pdf(tex_source: str, out_dir: Path, stem: str = "resume") -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    tex_path = out_dir / "resume.tex"
+    tex_path = out_dir / f"{stem}.tex"
     tex_path.write_text(tex_source, encoding="utf-8")
     return _run_tectonic(tex_path, out_dir)
 
 
-def tailor_resume_for_job(job_id: int, jd: str, *, model: str | None = None) -> Path:
-    """Blocking. Generate tailored LaTeX and compile to PDF; return the PDF path."""
+def _safe_filename(name: str) -> str:
+    """Make a company name safe to use as a filename stem on Windows."""
+    s = re.sub(r'[\\/:*?"<>|]+', "", name or "")  # strip forbidden chars
+    s = re.sub(r"\s+", " ", s).strip().strip(".")
+    return s or "resume"
+
+
+def tailor_resume_for_job(job_id: int, jd: str, company_name: str = "resume",
+                          *, model: str | None = None) -> Path:
+    """Blocking. Generate tailored LaTeX and compile to PDF; return the PDF path.
+
+    Saved as OUTPUT_DIR/<YYYY-MM-DD>/<Company>.pdf (a new folder per day)."""
     latex = generate_tailored_latex(jd, model=model)
-    return compile_pdf(latex, OUTPUT_DIR / str(job_id))
+    out_dir = OUTPUT_DIR / date.today().strftime("%Y-%m-%d")
+    return compile_pdf(latex, out_dir, stem=_safe_filename(company_name))
