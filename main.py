@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -12,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from database import (
-    get_db, get_companies, get_sources, get_stats, query_jobs, update_job_status,
+    get_db, init_db, get_companies, get_sources, get_stats, query_jobs, update_job_status,
     get_job, set_job_detail, set_resume_path, set_job_queued, get_queued_jobs,
     get_applied_jobs, get_applied_stats, insert_manual_job,
 )
@@ -26,7 +27,14 @@ from scrapers.runner import get_last_run, is_running, run_scrape
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-app = FastAPI(title="Fortune 500 Job Scraper")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()  # create the jobs table/indexes if this is a fresh Postgres DB
+    yield
+
+
+app = FastAPI(title="Fortune 500 Job Scraper", lifespan=lifespan)
 
 BASE = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
@@ -74,6 +82,20 @@ async def dashboard(request: Request):
         request=request,
         name="dashboard.html",
         context={"applied": applied, "stats": stats, "this_week": this_week},
+    )
+
+
+@app.get("/job/{job_id}", response_class=HTMLResponse)
+async def job_detail_page(request: Request, job_id: int):
+    conn = get_db()
+    try:
+        job = get_job(conn, job_id)
+    finally:
+        conn.close()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return templates.TemplateResponse(
+        request=request, name="job.html", context={"job": job},
     )
 
 
@@ -176,6 +198,69 @@ async def download_resume(job_id: int):
         raise HTTPException(status_code=404, detail="No resume generated yet")
     return FileResponse(job["resume_path"], media_type="application/pdf",
                         filename=f"resume_{job_id}.pdf")
+
+
+# ── Batch tailoring (Tailor All on the queue) ──────────────────────────────────
+# Runs sequentially in a daemon thread — the local LLM serves one request at a
+# time, so there's nothing to parallelize. Progress is polled via /status.
+
+_tailor_state: dict = {
+    "running": False, "total": 0, "done": 0, "ok": 0, "failed": 0, "current": None,
+}
+
+
+def _run_tailor_queue() -> None:
+    conn = get_db()
+    try:
+        jobs = get_queued_jobs(conn)
+        _tailor_state.update(running=True, total=len(jobs), done=0, ok=0, failed=0,
+                             current=None)
+        for job in jobs:
+            jid, company = job["id"], job["company_name"]
+            _tailor_state["current"] = company
+            jd = job.get("full_description")
+            if not jd:
+                try:
+                    jd = asyncio.run(fetch_job_detail(job))  # async fetch, own loop
+                except Exception:  # noqa: BLE001 — skip this job, keep the batch going
+                    jd = None
+                if jd:
+                    set_job_detail(conn, jid, jd)
+            if not jd:
+                _tailor_state["failed"] += 1
+            else:
+                try:
+                    # Unique stem (company + id) so same-company jobs don't overwrite.
+                    pdf = tailor_resume_for_job(jid, jd, f"{company} - {jid}")
+                    set_resume_path(conn, jid, str(pdf))
+                    _tailor_state["ok"] += 1
+                except ResumeError:
+                    _tailor_state["failed"] += 1
+            _tailor_state["done"] += 1
+        _tailor_state["current"] = None
+    finally:
+        conn.close()
+        _tailor_state["running"] = False
+
+
+@app.post("/api/tailor-queue")
+async def tailor_queue_all():
+    if _tailor_state["running"]:
+        return {"status": "already_running"}
+    conn = get_db()
+    try:
+        count = len(get_queued_jobs(conn))
+    finally:
+        conn.close()
+    if count == 0:
+        return {"status": "empty"}
+    threading.Thread(target=_run_tailor_queue, daemon=True).start()
+    return {"status": "started", "total": count}
+
+
+@app.get("/api/tailor-queue/status")
+async def tailor_queue_status():
+    return _tailor_state
 
 
 @app.post("/api/jobs/manual", response_model=JobResponse)

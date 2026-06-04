@@ -9,7 +9,7 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 
 
 def _load_env() -> None:

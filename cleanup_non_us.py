@@ -1,3 +1,5 @@
+from psycopg2.extras import RealDictCursor
+
 from database import get_db
 
 NON_US = [
@@ -16,7 +18,9 @@ NON_US = [
 ]
 
 conn = get_db()
-rows = conn.execute("SELECT id, job_title, location, job_url FROM jobs").fetchall()
+with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    cur.execute("SELECT id, job_title, location, job_url FROM jobs")
+    rows = cur.fetchall()
 
 to_delete = []
 for row in rows:
@@ -24,9 +28,10 @@ for row in rows:
     if any(kw in check for kw in NON_US):
         to_delete.append((row["id"], row["job_title"], row["location"], row["job_url"]))
 
-for job_id, title, loc, url in to_delete:
-    print(f"Deleting [{job_id}] {title[:50]} | loc={loc} | url={url[:70]}")
-    conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+with conn.cursor() as cur:
+    for job_id, title, loc, url in to_delete:
+        print(f"Deleting [{job_id}] {title[:50]} | loc={loc} | url={url[:70]}")
+        cur.execute("DELETE FROM jobs WHERE id = %s", (job_id,))
 
 conn.commit()
 conn.close()

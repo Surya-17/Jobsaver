@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    container_name: jobsaver-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jobsaver
+      POSTGRES_PASSWORD: jobsaver
+      POSTGRES_DB: jobsaver
+    ports:
+      - "5432:5432"
+    volumes:
+      - jobsaver_pgdata:/var/lib/postgresql/data
+
+volumes:
+  jobsaver_pgdata:

@@ -100,31 +100,48 @@
       <div id="job-list">
         {% for job in jobs %}
         <div class="job-card" data-id="{{ job.id }}" data-status="{{ job.status or '' }}">
-          <div class="job-card-top">
-            <span class="company-badge">{{ job.company_name }}</span>
-            <span class="ats-badge ats-{{ job.source }}">{{ job.source }}</span>
-            {% if job.status == 'applied' %}<span class="status-pill applied">Applied</span>
-            {% elif job.status == 'resume_modify' %}<span class="status-pill resume_modify">Modify Resume</span>{% endif %}
-            <div class="job-actions">
-              <button class="queue-btn" data-id="{{ job.id }}" onclick="addToQueue({{ job.id }}, this)"
-                      {% if job.queued %}disabled{% endif %} title="Add to tailor queue">
-                {% if job.queued %}✓ Queued{% else %}＋ Queue{% endif %}
-              </button>
-              <select class="status-select" data-id="{{ job.id }}" onchange="handleStatusChange(this)">
-                <option value="" {% if not job.status %}selected{% endif %}>Actions ▾</option>
-                <option value="applied" {% if job.status == 'applied' %}selected{% endif %}>Applied</option>
-                <option value="resume_modify" {% if job.status == 'resume_modify' %}selected{% endif %}>Modify Resume</option>
-                <option value="skip">Skip</option>
-              </select>
+          <div class="card-head">
+            <div class="card-headings">
+              <h3 class="job-title"><a href="/job/{{ job.id }}">{{ job.job_title }}</a></h3>
+              <div class="card-sub">
+                <span class="company">{{ job.company_name }}</span>
+                <span class="ats-badge ats-{{ job.source }}">{{ job.source }}</span>
+                {% if job.years_exp %}<span class="exp-badge {{ 'exp-high' if job.years_exp >= 6 else 'exp-mid' if job.years_exp >= 4 else 'exp-low' }}">{{ job.years_exp }} yr{{ 's' if job.years_exp > 1 else '' }} req</span>{% endif %}
+                {% if job.status == 'applied' %}<span class="status-pill applied">Applied</span>
+                {% elif job.status == 'resume_modify' %}<span class="status-pill resume_modify">Modify Resume</span>{% endif %}
+              </div>
             </div>
+            <select class="status-select" data-id="{{ job.id }}" onchange="handleStatusChange(this)">
+              <option value="" {% if not job.status %}selected{% endif %}>Actions ▾</option>
+              <option value="applied" {% if job.status == 'applied' %}selected{% endif %}>Applied</option>
+              <option value="resume_modify" {% if job.status == 'resume_modify' %}selected{% endif %}>Modify Resume</option>
+              <option value="skip">Skip</option>
+            </select>
           </div>
-          <h3 class="job-title"><a href="{{ job.job_url }}" target="_blank" rel="noopener">{{ job.job_title }}</a></h3>
-          <div class="job-meta">
+          <div class="card-meta">
             {% if job.location %}<span class="location">📍 {{ job.location }}</span>{% endif %}
             {% if job.date_posted %}
             <span class="posted" data-date="{{ job.date_posted }}">Posted {{ job.date_posted }}</span>
             {% endif %}
             <span class="seen" data-iso="{{ job.first_seen_at or job.scraped_at or '' }}">Seen {{ (job.first_seen_at or job.scraped_at or '')[:16].replace('T', ' ') }} UTC</span>
+          </div>
+          <div class="card-actions">
+            <button class="card-btn is-queue" data-id="{{ job.id }}" onclick="addToQueue({{ job.id }}, this)"
+                    {% if job.queued %}disabled{% endif %} title="Add to tailor queue">
+              {% if job.queued %}✓ Queued{% else %}＋ Queue{% endif %}
+            </button>
+            {% if job.full_description %}
+            <span class="card-flag">JD ✓</span>
+            {% else %}
+            <button class="card-btn" onclick="fetchJdCard({{ job.id }}, this)">Fetch JD</button>
+            {% endif %}
+            {% if job.resume_path %}
+            <a class="card-btn" href="/api/jobs/{{ job.id }}/resume" target="_blank">⬇ Resume</a>
+            {% else %}
+            <button class="card-btn primary" onclick="tailorResumeCard({{ job.id }}, this)">Tailor Resume</button>
+            {% endif %}
+            <a class="apply-link" href="{{ job.job_url }}" target="_blank" rel="noopener">Apply ↗</a>
+            <span class="card-msg"></span>
           </div>
         </div>
         {% endfor %}
@@ -147,6 +164,10 @@
     <!-- Tailor queue -->
     <aside class="queue-panel">
       <h2>Tailor Queue (<span id="queue-count">0</span>)</h2>
+      <div class="queue-controls">
+        <button id="tailor-all-btn" class="btn-primary" onclick="tailorAll()">Tailor All</button>
+        <div id="tailor-all-msg" class="tailor-all-msg"></div>
+      </div>
       <div id="queue-list"></div>
     </aside>
   </div>

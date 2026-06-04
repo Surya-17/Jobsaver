@@ -8,3 +8,4 @@ python-dotenv>=1.0.0
 google-genai>=0.3.0
 python-jobspy>=1.1.80
 openai>=1.40.0
+psycopg2-binary>=2.9

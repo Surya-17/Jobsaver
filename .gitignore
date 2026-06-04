@@ -6,6 +6,10 @@ __pycache__/
 *.png
 output/
 autodiscover_plans.json
+# Tool-generated knowledge graph (regenerable via `graphify update .`)
+graphify-out/
+# Runtime logs
+*.log
 # Your real resume + tailoring instructions stay local — only the .example files are tracked.
 resume/base_resume.tex
 resume/instructions.md
