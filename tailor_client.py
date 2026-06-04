@@ -34,8 +34,15 @@ def _client():
 
 
 def _strip(text: str) -> str:
-    """Remove Qwen3-style <think> traces and ```` ```latex ```` fences."""
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    """Remove Qwen3-style <think> traces and ```` ```latex ```` fences.
+
+    Qwen3 sometimes omits the opening <think> or emits an unbalanced </think>,
+    so cutting only matched <think>...</think> pairs leaves a dangling tail
+    (e.g. ".ReadByte </think>") that then prints above the resume. Instead, drop
+    everything up to and including the LAST </think>."""
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    text = text.strip()
     if "```" in text:
         # Keep the content of the first fenced block if present.
         m = re.search(r"```(?:latex|tex)?\s*(.*?)```", text, flags=re.S)
@@ -52,5 +59,8 @@ def chat(prompt: str, *, model: str | None = None) -> str:
         model=m,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
+        # Resume + JD prompts exceed Ollama's 4096 default, which silently
+        # truncates the front of the prompt. Ask for a larger context window.
+        extra_body={"options": {"num_ctx": 8192}},
     )
     return _strip(resp.choices[0].message.content or "")

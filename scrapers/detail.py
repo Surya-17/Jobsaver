@@ -5,6 +5,7 @@ source's detail API where one exists (greenhouse/workday/oracle), uses the
 description already stored for jobspy rows, and falls back to fetching the
 job_url page for everything else (generic/autodiscover/manual).
 """
+import asyncio
 import html
 import logging
 import re
@@ -12,10 +13,40 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from scrapers import llm
 from scrapers.exp_parser import strip_html
 from scrapers.oracle import _oracle_endpoint
 
 logger = logging.getLogger(__name__)
+
+_JD_CLEAN_PROMPT = (
+    "Below is the raw text of a job-posting web page. It includes site navigation, "
+    "buttons, cookie/login notices and other boilerplate around the actual posting. "
+    "Extract ONLY the job description: the role summary, responsibilities, "
+    "requirements/qualifications, and any benefits or about-the-role text that is "
+    "part of the posting. Drop all site chrome, navigation, and unrelated links. "
+    "Return clean plain text with simple line breaks and no markdown. "
+    "If the text contains no actual job description, reply with exactly: NONE\n\n"
+    "=== RAW PAGE TEXT ===\n"
+)
+
+
+async def _llm_clean_jd(raw_text: str) -> str | None:
+    """Use Gemini to pull the real job description out of a noisy page.
+
+    Falls back to the raw stripped text if Gemini isn't configured or errors,
+    and returns None if the model reports there's no description present."""
+    if not llm.have_key():
+        return raw_text
+    try:
+        out = await asyncio.to_thread(llm.ask, _JD_CLEAN_PROMPT + raw_text[:30000])
+    except Exception as exc:  # noqa: BLE001 — degrade to raw text on any LLM error
+        logger.warning("[Detail] LLM JD cleanup failed: %s", exc)
+        return raw_text
+    out = (out or "").strip()
+    if not out or out.upper() == "NONE" or len(out) < 80:
+        return None
+    return out
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -123,4 +154,5 @@ async def _generic_detail(session, job) -> str | None:
     # JS-rendered SPA shells produce little usable text — treat as a miss.
     if not text or len(text) < 200:
         return None
-    return text[:20000]
+    # The page text is full of nav/boilerplate; let Gemini extract the real JD.
+    return await _llm_clean_jd(text[:30000])

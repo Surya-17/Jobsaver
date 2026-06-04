@@ -49,12 +49,13 @@ function expBadge(years_exp) {
 }
 
 function renderCard(job) {
+  const skipped = currentView === 'skipped';
   const location = job.location ? `<span class="location">📍 ${escHtml(job.location)}</span>` : '';
   const posted = job.date_posted ? `<span class="posted">Posted ${escHtml(fmtDate(job.date_posted))}</span>` : '';
   const seen = `<span class="seen">Seen ${escHtml(fmtDatetime(job.first_seen_at || job.scraped_at))}</span>`;
 
-  const actions = currentView === 'skipped'
-    ? `<button class="restore-btn" onclick="restoreJob(${job.id})">Restore</button>`
+  const headRight = skipped
+    ? `<button class="card-btn" onclick="restoreJob(${job.id})">Restore</button>`
     : `<select class="status-select" data-id="${job.id}" onchange="handleStatusChange(this)">
         <option value="" ${!job.status ? 'selected' : ''}>Actions ▾</option>
         <option value="applied" ${job.status === 'applied' ? 'selected' : ''}>Applied</option>
@@ -68,27 +69,41 @@ function renderCard(job) {
     ? `<span class="status-pill resume_modify">Modify Resume</span>`
     : '';
 
-  const queueBtn = currentView === 'skipped' ? '' : (job.queued
-    ? `<button class="queue-btn" disabled>✓ Queued</button>`
-    : `<button class="queue-btn" data-id="${job.id}" onclick="addToQueue(${job.id}, this)" title="Add to tailor queue">＋ Queue</button>`);
+  const actions = skipped ? '' : `
+      <div class="card-actions">
+        ${job.queued
+          ? `<button class="card-btn is-queue" disabled>✓ Queued</button>`
+          : `<button class="card-btn is-queue" data-id="${job.id}" onclick="addToQueue(${job.id}, this)" title="Add to tailor queue">＋ Queue</button>`}
+        ${job.full_description
+          ? `<span class="card-flag">JD ✓</span>`
+          : `<button class="card-btn" onclick="fetchJdCard(${job.id}, this)">Fetch JD</button>`}
+        ${job.resume_path
+          ? `<a class="card-btn" href="/api/jobs/${job.id}/resume" target="_blank">⬇ Resume</a>`
+          : `<button class="card-btn primary" onclick="tailorResumeCard(${job.id}, this)">Tailor Resume</button>`}
+        <a class="apply-link" href="${escHtml(job.job_url)}" target="_blank" rel="noopener">Apply ↗</a>
+        <span class="card-msg"></span>
+      </div>`;
 
   return `
     <div class="job-card" data-id="${job.id}" data-status="${escHtml(job.status || '')}">
-      <div class="job-card-top">
-        <span class="company-badge">${escHtml(job.company_name)}</span>
-        <span class="ats-badge ${atsClass(job.source)}">${escHtml(job.source || '')}</span>
-        ${expBadge(job.years_exp)}
-        ${pill}
-        <div class="job-actions">${queueBtn}${actions}</div>
+      <div class="card-head">
+        <div class="card-headings">
+          <h3 class="job-title"><a href="/job/${job.id}">${escHtml(job.job_title)}</a></h3>
+          <div class="card-sub">
+            <span class="company">${escHtml(job.company_name)}</span>
+            <span class="ats-badge ${atsClass(job.source)}">${escHtml(job.source || '')}</span>
+            ${expBadge(job.years_exp)}
+            ${pill}
+          </div>
+        </div>
+        ${headRight}
       </div>
-      <h3 class="job-title">
-        <a href="${escHtml(job.job_url)}" target="_blank" rel="noopener">${escHtml(job.job_title)}</a>
-      </h3>
-      <div class="job-meta">
+      <div class="card-meta">
         ${location}
         ${posted}
         ${seen}
       </div>
+      ${actions}
     </div>`;
 }
 
@@ -320,7 +335,7 @@ function renderQueueItem(job) {
         <span class="ats-badge ${atsClass(job.source)}">${escHtml(job.source || '')}</span>
         <button class="queue-remove" onclick="removeFromQueue(${job.id})" title="Remove">✕</button>
       </div>
-      <a class="queue-title" href="${escHtml(job.job_url)}" target="_blank" rel="noopener">${escHtml(job.job_title)}</a>
+      <a class="queue-title" href="/job/${job.id}">${escHtml(job.job_title)}</a>
       <div class="queue-company">${escHtml(job.company_name)}</div>
       <div class="queue-actions">${jd} ${resume} ${applied}</div>
       <div class="queue-msg"></div>
@@ -337,7 +352,7 @@ async function removeFromQueue(id) {
   await fetch(`/api/jobs/${id}/queue`, { method: 'DELETE' });
   fetchQueue();
   // Re-enable the list card's queue button if visible.
-  const cardBtn = document.querySelector(`.job-card[data-id="${id}"] .queue-btn`);
+  const cardBtn = document.querySelector(`.job-card[data-id="${id}"] .card-btn.is-queue`);
   if (cardBtn) { cardBtn.disabled = false; cardBtn.textContent = '＋ Queue'; }
 }
 
@@ -377,6 +392,90 @@ async function markApplied(id) {
   });
   fetchQueue();
   fetchStats();
+}
+
+// ── Tailor All (whole queue, sequential, background) ───────────────────────────
+
+let tailorPollTimer = null;
+
+function setTailorMsg(text) {
+  document.getElementById('tailor-all-msg').textContent = text;
+}
+
+function setTailorBtnRunning(running) {
+  const btn = document.getElementById('tailor-all-btn');
+  btn.disabled = running;
+  btn.innerHTML = running ? '<span class="spinner"></span> Tailoring…' : 'Tailor All';
+}
+
+async function tailorAll() {
+  setTailorBtnRunning(true);
+  const r = await fetch('/api/tailor-queue', { method: 'POST' }).then(r => r.json());
+  if (r.status === 'empty') {
+    setTailorMsg('Queue is empty — add jobs with ＋ Queue first.');
+    setTailorBtnRunning(false);
+    return;
+  }
+  pollTailorStatus();
+}
+
+function pollTailorStatus() {
+  clearInterval(tailorPollTimer);
+  tailorPollTimer = setInterval(async () => {
+    try {
+      const s = await fetch('/api/tailor-queue/status').then(r => r.json());
+      if (s.running) {
+        setTailorBtnRunning(true);
+        setTailorMsg(`${s.done}/${s.total} — ${s.ok} ok, ${s.failed} failed`
+          + (s.current ? ` · ${s.current}` : ''));
+      } else {
+        clearInterval(tailorPollTimer);
+        setTailorBtnRunning(false);
+        if (s.total) setTailorMsg(`Done: ${s.ok} tailored, ${s.failed} failed of ${s.total}.`);
+        fetchQueue();
+      }
+    } catch { /* ignore transient errors */ }
+  }, 2000);
+}
+
+// ── Per-card actions (Fetch JD / Tailor Resume on the job list) ────────────────
+
+function cardMsg(id, text, isErr = false, log = null) {
+  const el = document.querySelector(`.job-card[data-id="${id}"] .card-msg`);
+  if (!el) return;
+  el.className = 'card-msg' + (isErr ? ' err' : '');
+  el.textContent = text;
+  if (log) {
+    const pre = document.createElement('details');
+    pre.innerHTML = `<summary>compile log</summary><pre>${escHtml(log)}</pre>`;
+    el.appendChild(pre);
+  }
+}
+
+async function fetchJdCard(id, btn) {
+  btn.disabled = true;
+  btn.textContent = '…';
+  const r = await fetch(`/api/jobs/${id}/fetch-jd`, { method: 'POST' }).then(r => r.json());
+  if (r.ok) {
+    btn.outerHTML = '<span class="card-flag">JD ✓</span>';
+  } else {
+    cardMsg(id, r.error || 'JD fetch failed', true);
+    btn.disabled = false;
+    btn.textContent = 'Fetch JD';
+  }
+}
+
+async function tailorResumeCard(id, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Tailoring…';
+  const r = await fetch(`/api/jobs/${id}/tailor-resume`, { method: 'POST' }).then(r => r.json());
+  if (r.ok) {
+    btn.outerHTML = `<a class="card-btn" href="/api/jobs/${id}/resume" target="_blank">⬇ Resume</a>`;
+  } else {
+    cardMsg(id, r.error || 'Tailoring failed', true, r.compile_log);
+    btn.disabled = false;
+    btn.textContent = 'Tailor Resume';
+  }
 }
 
 // ── Scrape trigger ────────────────────────────────────────────────────────────
@@ -480,6 +579,11 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchStats();
   fetchQueue();
   reformatDates();
+
+  // Reconnect to an in-progress Tailor All run after a page refresh.
+  fetch('/api/tailor-queue/status').then(r => r.json()).then(s => {
+    if (s.running) pollTailorStatus();
+  }).catch(() => {});
 
   // Resume polling if scrape is already running on page load
   fetch('/api/scrape/status').then(r => r.json()).then(d => {

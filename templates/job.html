@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ job.job_title }} · {{ job.company_name }}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>{{ job.company_name }}</h1>
+      <div class="stats">Job #{{ job.id }}</div>
+    </div>
+    <div class="header-right">
+      <a class="btn-secondary" href="/">← Back to jobs</a>
+      <a class="btn-primary" href="{{ job.job_url }}" target="_blank" rel="noopener">Apply ↗</a>
+    </div>
+  </header>
+
+  <main class="job-detail">
+    <div class="detail-header">
+      <h2 class="detail-title">{{ job.job_title }}</h2>
+      <div class="card-sub">
+        <span class="company">{{ job.company_name }}</span>
+        <span class="ats-badge ats-{{ job.source }}">{{ job.source }}</span>
+        {% if job.years_exp %}<span class="exp-badge {{ 'exp-high' if job.years_exp >= 6 else 'exp-mid' if job.years_exp >= 4 else 'exp-low' }}">{{ job.years_exp }} yr{{ 's' if job.years_exp > 1 else '' }} req</span>{% endif %}
+        {% if job.status == 'applied' %}<span class="status-pill applied">Applied</span>
+        {% elif job.status == 'resume_modify' %}<span class="status-pill resume_modify">Modify Resume</span>{% endif %}
+      </div>
+      <div class="job-meta">
+        {% if job.location %}<span class="location">📍 {{ job.location }}</span>{% endif %}
+        {% if job.date_posted %}<span class="posted">Posted {{ job.date_posted }}</span>{% endif %}
+        <span class="seen">Seen {{ (job.first_seen_at or job.scraped_at or '')[:16].replace('T', ' ') }} UTC</span>
+      </div>
+
+      <div class="detail-actions">
+        {% if job.resume_path %}
+        <a class="btn-primary" href="/api/jobs/{{ job.id }}/resume" target="_blank">⬇ Download tailored resume</a>
+        <button class="btn-secondary" id="tailor-btn" onclick="tailor()">Re-tailor</button>
+        {% else %}
+        <button class="btn-primary" id="tailor-btn" onclick="tailor()">Tailor resume for this job</button>
+        {% endif %}
+        {% if not job.full_description %}
+        <button class="btn-secondary" id="fetchjd-btn" onclick="fetchJd()">Fetch JD</button>
+        {% endif %}
+      </div>
+      <div id="detail-msg" class="detail-msg"></div>
+    </div>
+
+    <section class="jd-section">
+      <h3>Job Description</h3>
+      {% if job.full_description %}
+      <pre class="jd-text">{{ job.full_description }}</pre>
+      {% else %}
+      <p class="jd-empty" id="jd-empty">No description fetched yet. Click <strong>Fetch JD</strong> above to pull it from the source.</p>
+      {% endif %}
+    </section>
+  </main>
+
+  <script>
+    const JOB_ID = {{ job.id }};
+
+    function setMsg(text, isErr = false) {
+      const el = document.getElementById('detail-msg');
+      el.className = 'detail-msg' + (isErr ? ' err' : '');
+      el.textContent = text;
+    }
+
+    async function fetchJd() {
+      const btn = document.getElementById('fetchjd-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
+      const r = await fetch(`/api/jobs/${JOB_ID}/fetch-jd`, { method: 'POST' }).then(r => r.json());
+      if (r.ok) { location.reload(); }
+      else {
+        setMsg(r.error || 'Could not fetch a job description for this source.', true);
+        if (btn) { btn.disabled = false; btn.textContent = 'Fetch JD'; }
+      }
+    }
+
+    async function tailor() {
+      const btn = document.getElementById('tailor-btn');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Tailoring…';
+      setMsg('Tailoring resume (this can take a minute or two on the local model)…');
+      const r = await fetch(`/api/jobs/${JOB_ID}/tailor-resume`, { method: 'POST' }).then(r => r.json());
+      if (r.ok) { location.reload(); }
+      else {
+        setMsg(r.error || 'Tailoring failed.', true);
+        btn.disabled = false; btn.textContent = 'Tailor resume for this job';
+      }
+    }
+  </script>
+</body>
+</html>

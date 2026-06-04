@@ -1,7 +1,8 @@
 """Resume tailoring: base LaTeX + JD + instructions -> tailored LaTeX -> PDF.
 
 The LLM call goes through tailor_client (local Ollama by default). The LaTeX is
-compiled by Tectonic, isolated in _run_tectonic so the engine can be swapped.
+compiled by the engine set in RESUME_LATEX_ENGINE (pdflatex by default; tectonic
+optional), dispatched in _run_latex so the engine can be swapped.
 """
 import logging
 import os
@@ -60,13 +61,26 @@ def _split_document(base_tex: str) -> tuple[str, str]:
 
 def _extract_body(model_out: str) -> str:
     """The model is asked for a body fragment, but be defensive: if it wrapped
-    the answer in a full document, keep only what's between the markers."""
+    the answer in a full document, keep only what's between the markers, and
+    drop any prose the model emits around the resume. Two real failures seen:
+    - leading commentary ("Here's a tailored version...") or a stray reasoning
+      remnant ("...</think>") that then prints above the name;
+    - trailing explanations ("This version positions you as...").
+    The resume body is pure LaTeX, so every meaningful line starts with a
+    command — we keep only from the first such line through the last."""
     out = model_out
     if _BEGIN in out:
         out = out.split(_BEGIN, 1)[1]
     if _END in out:
         out = out.split(_END, 1)[0]
-    return out.strip()
+    lines = out.strip().splitlines()
+    first_cmd = next((i for i in range(len(lines))
+                      if lines[i].lstrip().startswith("\\")), None)
+    last_cmd = next((i for i in range(len(lines) - 1, -1, -1)
+                     if lines[i].lstrip().startswith("\\")), None)
+    if first_cmd is not None and last_cmd is not None:
+        lines = lines[first_cmd : last_cmd + 1]
+    return "\n".join(lines).strip()
 
 
 def _build_prompt(base_body: str, jd: str, instructions: str) -> str:
@@ -109,8 +123,12 @@ def generate_tailored_latex(jd: str, *, model: str | None = None) -> str:
     return f"{preamble}\n{body}\n{_END}\n"
 
 
+# Which LaTeX engine to compile with. Default pdflatex (MiKTeX/TeX Live);
+# set RESUME_LATEX_ENGINE=tectonic to fall back to Tectonic/XeTeX.
+_ENGINE = (os.environ.get("RESUME_LATEX_ENGINE") or "pdflatex").lower()
+
+
 def _run_tectonic(tex_path: Path, out_dir: Path) -> Path:
-    """ISOLATED engine call — swap this one function to change LaTeX engines."""
     if shutil.which("tectonic") is None:
         raise ResumeError("Tectonic is not installed or not on PATH "
                           "(install: scoop install tectonic).")
@@ -127,11 +145,46 @@ def _run_tectonic(tex_path: Path, out_dir: Path) -> Path:
     return pdf
 
 
+def _run_pdflatex(tex_path: Path, out_dir: Path) -> Path:
+    if shutil.which("pdflatex") is None:
+        raise ResumeError("pdflatex not found on PATH (install MiKTeX or TeX Live, "
+                          "or set RESUME_LATEX_ENGINE=tectonic).")
+    cmd = ["pdflatex", "-interaction=nonstopmode", "-halt-on-error",
+           f"-output-directory={out_dir}", str(tex_path)]
+    proc = None
+    try:
+        # Two passes: the second settles \section rules / tabular spacing.
+        for _ in range(2):
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                                  cwd=str(out_dir))
+    except subprocess.TimeoutExpired:
+        raise ResumeError("LaTeX compile timed out after 120s.")
+    pdf = out_dir / (tex_path.stem + ".pdf")
+    if proc.returncode != 0 or not pdf.exists():
+        log_file = out_dir / (tex_path.stem + ".log")
+        log = (log_file.read_text(encoding="utf-8", errors="ignore")[-3000:]
+               if log_file.exists() else (proc.stderr or proc.stdout))
+        raise ResumeError("LaTeX compile failed.", log=log)
+    return pdf
+
+
+def _run_latex(tex_path: Path, out_dir: Path) -> Path:
+    """ISOLATED engine call — dispatch by RESUME_LATEX_ENGINE."""
+    return _run_tectonic(tex_path, out_dir) if _ENGINE == "tectonic" else _run_pdflatex(tex_path, out_dir)
+
+
 def compile_pdf(tex_source: str, out_dir: Path, stem: str = "resume") -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     tex_path = out_dir / f"{stem}.tex"
     tex_path.write_text(tex_source, encoding="utf-8")
-    return _run_tectonic(tex_path, out_dir)
+    pdf = _run_latex(tex_path, out_dir)
+    # Keep only the PDF — drop the .tex and pdflatex/tectonic scratch files.
+    # (On failure _run_latex raises before this, leaving the .log for debugging.)
+    for ext in (".tex", ".aux", ".log", ".out", ".fls", ".fdb_latexmk", ".synctex.gz"):
+        scratch = out_dir / f"{stem}{ext}"
+        if scratch != pdf and scratch.exists():
+            scratch.unlink()
+    return pdf
 
 
 def _safe_filename(name: str) -> str:
