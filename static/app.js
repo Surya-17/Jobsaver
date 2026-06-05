@@ -84,8 +84,9 @@ function renderCard(job) {
         <span class="card-msg"></span>
       </div>`;
 
+  const hasResumeClass = job.resume_path ? 'has-resume' : '';
   return `
-    <div class="job-card" data-id="${job.id}" data-status="${escHtml(job.status || '')}">
+    <div class="job-card ${hasResumeClass}" data-id="${job.id}" data-status="${escHtml(job.status || '')}">
       <div class="card-head">
         <div class="card-headings">
           <h3 class="job-title"><a href="/job/${job.id}">${escHtml(job.job_title)}</a></h3>
@@ -326,18 +327,20 @@ function renderQueueItem(job) {
   const resume = job.resume_path
     ? `<a class="queue-mini" href="/api/jobs/${job.id}/resume" target="_blank">⬇ Resume</a>`
     : `<button class="queue-mini" onclick="tailorResume(${job.id}, this)">Tailor Resume</button>`;
+  const applyLink = `<a class="queue-mini apply-link-btn" href="${escHtml(job.job_url)}" target="_blank" rel="noopener">Apply ↗</a>`;
   const applied = job.status === 'applied'
     ? `<span class="status-pill applied">Applied</span>`
     : `<button class="queue-mini" onclick="markApplied(${job.id})">Mark Applied</button>`;
+  const hasResumeClass = job.resume_path ? 'has-resume' : '';
   return `
-    <div class="queue-item" data-id="${job.id}">
+    <div class="queue-item ${hasResumeClass}" data-id="${job.id}">
       <div class="queue-item-top">
         <span class="ats-badge ${atsClass(job.source)}">${escHtml(job.source || '')}</span>
         <button class="queue-remove" onclick="removeFromQueue(${job.id})" title="Remove">✕</button>
       </div>
       <a class="queue-title" href="/job/${job.id}">${escHtml(job.job_title)}</a>
       <div class="queue-company">${escHtml(job.company_name)}</div>
-      <div class="queue-actions">${jd} ${resume} ${applied}</div>
+      <div class="queue-actions">${jd} ${resume} ${applyLink} ${applied}</div>
       <div class="queue-msg"></div>
     </div>`;
 }
@@ -438,6 +441,24 @@ function pollTailorStatus() {
   }, 2000);
 }
 
+async function applyAllQueue() {
+  if (!confirm('Mark all queued jobs as applied?')) return;
+  const btn = document.getElementById('apply-all-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/queue/apply-all', { method: 'POST' }).then(r => r.json());
+    if (r.ok) {
+      fetchQueue();
+      fetchJobs();
+      fetchStats();
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // ── Per-card actions (Fetch JD / Tailor Resume on the job list) ────────────────
 
 function cardMsg(id, text, isErr = false, log = null) {
@@ -458,6 +479,20 @@ async function fetchJdCard(id, btn) {
   const r = await fetch(`/api/jobs/${id}/fetch-jd`, { method: 'POST' }).then(r => r.json());
   if (r.ok) {
     btn.outerHTML = '<span class="card-flag">JD ✓</span>';
+    if (r.years_exp != null && r.years_exp > 0) {
+      const cardSub = document.querySelector(`.job-card[data-id="${id}"] .card-sub`);
+      if (cardSub) {
+        const oldBadge = cardSub.querySelector('.exp-badge');
+        if (oldBadge) oldBadge.remove();
+        
+        const badgeHTML = expBadge(r.years_exp);
+        if (badgeHTML) {
+          const temp = document.createElement('template');
+          temp.innerHTML = badgeHTML.trim();
+          cardSub.appendChild(temp.content.firstChild);
+        }
+      }
+    }
   } else {
     cardMsg(id, r.error || 'JD fetch failed', true);
     btn.disabled = false;
@@ -471,6 +506,10 @@ async function tailorResumeCard(id, btn) {
   const r = await fetch(`/api/jobs/${id}/tailor-resume`, { method: 'POST' }).then(r => r.json());
   if (r.ok) {
     btn.outerHTML = `<a class="card-btn" href="/api/jobs/${id}/resume" target="_blank">⬇ Resume</a>`;
+    const card = document.querySelector(`.job-card[data-id="${id}"]`);
+    if (card) {
+      card.classList.add('has-resume');
+    }
   } else {
     cardMsg(id, r.error || 'Tailoring failed', true, r.compile_log);
     btn.disabled = false;

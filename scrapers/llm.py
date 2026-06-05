@@ -5,11 +5,14 @@ Reads GEMINI_API_KEY from the environment or a .env file. Free tier
 """
 import logging
 import os
+import threading
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
+
+_thread_local = threading.local()
 
 
 def _load_env() -> None:
@@ -25,14 +28,15 @@ def have_key() -> bool:
     return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
 
 
-@lru_cache(maxsize=1)
 def _client():
-    _load_env()
-    from google import genai
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not key:
-        raise RuntimeError("GEMINI_API_KEY not set (add it to .env)")
-    return genai.Client(api_key=key)
+    if not hasattr(_thread_local, "client"):
+        _load_env()
+        from google import genai
+        key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY not set (add it to .env)")
+        _thread_local.client = genai.Client(api_key=key)
+    return _thread_local.client
 
 
 def ask(prompt: str, model: str | None = None) -> str:

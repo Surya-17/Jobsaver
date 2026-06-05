@@ -3,6 +3,10 @@ SEARCH_TITLES = [
     "AI Engineer",
 ]
 
+AUTOFETCH_JD_TITLES = [
+    "AI Engineer",
+]
+
 CONCURRENCY_LIMIT = 15
 
 # Run with ?test=true on /scrape to use only these 10 companies
@@ -965,3 +969,31 @@ COMPANIES = [
         "enabled": False,
     },
 ]
+
+
+# Blacklist configuration
+import os
+BLACKLIST_COMPANIES = [
+    # Add companies to blacklist here (e.g. "CyberCoders", "Revature")
+    "Emonics LLC",
+    "Crossing Hurdles",
+]
+
+# Load from environment variable (comma-separated list)
+_env_blacklist = os.environ.get("BLACKLIST_COMPANIES", "")
+if _env_blacklist:
+    for c in _env_blacklist.split(","):
+        c_clean = c.strip()
+        if c_clean and c_clean not in BLACKLIST_COMPANIES:
+            BLACKLIST_COMPANIES.append(c_clean)
+
+
+def is_blacklisted(company_name: str) -> bool:
+    if not company_name:
+        return False
+    name_lower = company_name.lower()
+    for b in BLACKLIST_COMPANIES:
+        if b.lower() in name_lower:
+            return True
+    return False
+

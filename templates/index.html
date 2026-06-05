@@ -165,7 +165,10 @@
     <aside class="queue-panel">
       <h2>Tailor Queue (<span id="queue-count">0</span>)</h2>
       <div class="queue-controls">
-        <button id="tailor-all-btn" class="btn-primary" onclick="tailorAll()">Tailor All</button>
+        <div class="queue-btn-group">
+          <button id="tailor-all-btn" class="btn-primary" onclick="tailorAll()">Tailor All</button>
+          <button id="apply-all-btn" class="btn-secondary" onclick="applyAllQueue()">Apply All</button>
+        </div>
         <div id="tailor-all-msg" class="tailor-all-msg"></div>
       </div>
       <div id="queue-list"></div>

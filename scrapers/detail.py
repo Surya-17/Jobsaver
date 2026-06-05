@@ -21,32 +21,60 @@ logger = logging.getLogger(__name__)
 
 _JD_CLEAN_PROMPT = (
     "Below is the raw text of a job-posting web page. It includes site navigation, "
-    "buttons, cookie/login notices and other boilerplate around the actual posting. "
-    "Extract ONLY the job description: the role summary, responsibilities, "
-    "requirements/qualifications, and any benefits or about-the-role text that is "
-    "part of the posting. Drop all site chrome, navigation, and unrelated links. "
-    "Return clean plain text with simple line breaks and no markdown. "
+    "buttons, cookie/login notices and other boilerplate around the actual posting.\n"
+    "Tasks:\n"
+    "1. Determine the minimum years of experience required for the role (look at the requirements "
+    "   section and the job title. e.g. Senior/Lead imply around 5-6 years). If entry-level or not specified, use 0.\n"
+    "2. Extract ONLY the job description: the role summary, responsibilities, "
+    "   requirements/qualifications, and any benefits or about-the-role text. Drop all site chrome.\n\n"
+    "Format your output EXACTLY as follows:\n"
+    "YEARS_REQUIRED: <integer>\n"
+    "=== JOB DESCRIPTION ===\n"
+    "<cleaned job description plain text with simple line breaks, no markdown>\n\n"
     "If the text contains no actual job description, reply with exactly: NONE\n\n"
     "=== RAW PAGE TEXT ===\n"
 )
 
 
-async def _llm_clean_jd(raw_text: str) -> str | None:
-    """Use Gemini to pull the real job description out of a noisy page.
+async def _llm_clean_jd(raw_text: str, title: str) -> tuple[str | None, int | None]:
+    """Use Gemini to pull the real job description and required years of experience out of a noisy page.
 
     Falls back to the raw stripped text if Gemini isn't configured or errors,
-    and returns None if the model reports there's no description present."""
+    and returns (None, None) if the model reports there's no description present."""
     if not llm.have_key():
-        return raw_text
+        from scrapers.exp_parser import infer_exp
+        return raw_text, infer_exp(title, raw_text)
     try:
         out = await asyncio.to_thread(llm.ask, _JD_CLEAN_PROMPT + raw_text[:30000])
     except Exception as exc:  # noqa: BLE001 — degrade to raw text on any LLM error
         logger.warning("[Detail] LLM JD cleanup failed: %s", exc)
-        return raw_text
+        from scrapers.exp_parser import infer_exp
+        return raw_text, infer_exp(title, raw_text)
     out = (out or "").strip()
     if not out or out.upper() == "NONE" or len(out) < 80:
-        return None
-    return out
+        return None, None
+
+    years_exp = None
+    cleaned_jd = out
+
+    # Parse YEARS_REQUIRED
+    m = re.match(r"^YEARS_REQUIRED:\s*(\d+)", out, re.I)
+    if m:
+        years_exp = int(m.group(1))
+        lines = out.splitlines()
+        jd_start_idx = 1
+        for idx, line in enumerate(lines[1:], 1):
+            if "=== JOB DESCRIPTION ===" in line:
+                jd_start_idx = idx + 1
+                break
+        cleaned_jd = "\n".join(lines[jd_start_idx:]).strip()
+
+    from scrapers.exp_parser import infer_exp
+    if years_exp is None or years_exp == 0:
+        years_exp = infer_exp(title, cleaned_jd)
+
+    return cleaned_jd, years_exp
+
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -61,8 +89,8 @@ def _clean(text: str | None) -> str | None:
     return out or None
 
 
-async def fetch_job_detail(job: dict) -> str | None:
-    """Return cleaned full JD text for a job row, or None on failure."""
+async def fetch_job_detail(job: dict) -> tuple[str | None, int | None]:
+    """Return (cleaned full JD text, years_exp) for a job row, or (None, None) on failure."""
     ats = (job.get("ats_type") or "").lower()
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout, headers=_HEADERS) as session:
@@ -74,41 +102,49 @@ async def fetch_job_detail(job: dict) -> str | None:
             if ats == "oracle":
                 return await _oracle_detail(session, job)
             if ats == "jobspy":
-                return job.get("full_description") or await _generic_detail(session, job)
+                desc = job.get("full_description")
+                if desc:
+                    from scrapers.exp_parser import infer_exp
+                    years_exp = job.get("years_exp")
+                    if years_exp is None or years_exp == 0:
+                        years_exp = infer_exp(job.get("job_title", ""), desc)
+                    return desc, years_exp
+                return await _generic_detail(session, job)
             return await _generic_detail(session, job)
         except Exception as exc:
             logger.error("[Detail] %s id=%s: %s", ats, job.get("id"), exc)
-            return None
+            return None, None
 
 
-async def _greenhouse_detail(session, job) -> str | None:
-    # token from source_url (career_url = boards.greenhouse.io/{token}); id from job_url.
-    # The id may be in a gh_jid= param (custom domains) or a /jobs/{id} / numeric path.
+async def _greenhouse_detail(session, job) -> tuple[str | None, int | None]:
     token = urlparse(job.get("source_url") or "").path.strip("/").split("/")[0]
     job_url = job.get("job_url", "")
     m = re.search(r"gh_jid=(\d+)", job_url) or re.search(r"/(\d{4,})(?:[/?#]|$)", job_url)
     if not token or not m:
-        return None
+        return None, None
     url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{m.group(1)}?content=true"
     async with session.get(url) as resp:
         if resp.status != 200:
-            return None
+            return None, None
         data = await resp.json(content_type=None)
-    return _clean(data.get("content"))
+    content = _clean(data.get("content"))
+    if content:
+        from scrapers.exp_parser import infer_exp
+        return content, infer_exp(job.get("job_title", ""), content)
+    return content, None
 
 
-async def _workday_detail(session, job) -> str | None:
+async def _workday_detail(session, job) -> tuple[str | None, int | None]:
     career_url = job.get("source_url") or ""
     parsed = urlparse(career_url)
     host = parsed.hostname or ""
     if "myworkdayjobs.com" not in host:
-        return None
+        return None, None
     tenant = host.split(".")[0]
     board = parsed.path.strip("/").split("/")[0]
     external_path = job.get("job_url", "")[len(career_url.rstrip("/")):]
     if not external_path:
-        return None
-    # Workday's detail endpoint often 403s without a prior board visit; prime cookies.
+        return None, None
     try:
         async with session.get(career_url):
             pass
@@ -117,42 +153,48 @@ async def _workday_detail(session, job) -> str | None:
     url = f"https://{host}/wday/cxs/{tenant}/{board}{external_path}"
     async with session.get(url, headers={"Referer": career_url}) as resp:
         if resp.status != 200:
-            return None
+            return None, None
         data = await resp.json(content_type=None)
-    return _clean((data.get("jobPostingInfo") or {}).get("jobDescription"))
+    content = _clean((data.get("jobPostingInfo") or {}).get("jobDescription"))
+    if content:
+        from scrapers.exp_parser import infer_exp
+        return content, infer_exp(job.get("job_title", ""), content)
+    return content, None
 
 
-async def _oracle_detail(session, job) -> str | None:
+async def _oracle_detail(session, job) -> tuple[str | None, int | None]:
     api, host, site = _oracle_endpoint(job.get("source_url") or "")
     if not api:
-        return None
+        return None, None
     job_id = job.get("job_url", "").rstrip("/").split("/")[-1]
     if not job_id:
-        return None
+        return None, None
     url = (f"{api}/{job_id}?expand=requisitionDescription"
            f"&onlyData=true")
     async with session.get(url) as resp:
         if resp.status != 200:
-            return None
+            return None, None
         data = await resp.json(content_type=None)
-    # Single-resource GET returns the requisition fields at top level.
     parts = [data.get("ShortDescriptionStr"), data.get("ExternalResponsibilitiesStr"),
              data.get("ExternalQualificationsStr")]
     joined = "\n\n".join(p for p in parts if p)
-    return _clean(joined) if joined else None
+    content = _clean(joined) if joined else None
+    if content:
+        from scrapers.exp_parser import infer_exp
+        return content, infer_exp(job.get("job_title", ""), content)
+    return content, None
 
 
-async def _generic_detail(session, job) -> str | None:
+async def _generic_detail(session, job) -> tuple[str | None, int | None]:
     url = job.get("job_url", "")
     if not url.startswith("http"):
-        return None
+        return None, None
     async with session.get(url) as resp:
         if resp.status != 200:
-            return None
+            return None, None
         body = await resp.text()
     text = _clean(body)
-    # JS-rendered SPA shells produce little usable text — treat as a miss.
     if not text or len(text) < 200:
-        return None
-    # The page text is full of nav/boilerplate; let Gemini extract the real JD.
-    return await _llm_clean_jd(text[:30000])
+        return None, None
+    return await _llm_clean_jd(text[:30000], job.get("job_title", ""))
+

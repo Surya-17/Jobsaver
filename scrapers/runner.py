@@ -8,7 +8,7 @@ from functools import lru_cache
 
 import aiohttp
 
-from config import COMPANIES, CONCURRENCY_LIMIT, SEARCH_TITLES, TEST_COMPANIES
+from config import COMPANIES, CONCURRENCY_LIMIT, SEARCH_TITLES, TEST_COMPANIES, is_blacklisted, AUTOFETCH_JD_TITLES
 from database import get_db, insert_job
 from scrapers.greenhouse import fetch_greenhouse_jobs
 from scrapers.generic import scrape_company
@@ -222,10 +222,25 @@ async def _scrape_one(
                 jobs = await scrape_company(session, None, company_cfg, search_titles)
 
             jobs = [j for j in jobs if _is_us_location(j.get("location", ""), j.get("job_url", ""))
-                    and _is_eligible(j.get("job_title", ""))]
+                    and _is_eligible(j.get("job_title", ""))
+                    and not is_blacklisted(j.get("company_name", ""))]
+            
+            from scrapers.detail import fetch_job_detail
             for job in jobs:
-                if "years_exp" not in job:
+                req_title = job.get("requested_title", "")
+                if any(t.lower() in req_title.lower() for t in AUTOFETCH_JD_TITLES):
+                    try:
+                        desc, years = await fetch_job_detail(job)
+                        if desc:
+                            job["full_description"] = desc
+                            job["years_exp"] = years if years is not None else infer_exp(job.get("job_title", ""), desc)
+                    except Exception as exc:
+                        logger.warning("[Runner] Auto-fetching JD failed for %s (%s): %s", 
+                                       job.get("job_title"), job.get("company_name"), exc)
+                
+                if "years_exp" not in job or job["years_exp"] is None:
                     job["years_exp"] = infer_exp(job.get("job_title", ""))
+            
             new_count = sum(1 for job in jobs if insert_job(db_conn, job))
             return new_count, len(jobs) - new_count, None
 
@@ -247,7 +262,8 @@ async def _scrape_jobspy(
             executor, fetch_jobspy_jobs, search_titles
         )
         jobs = [j for j in jobs if _is_us_location(j.get("location", ""), j.get("job_url", ""))
-                and _is_eligible(j.get("job_title", ""))]
+                and _is_eligible(j.get("job_title", ""))
+                and not is_blacklisted(j.get("company_name", ""))]
         new_count = sum(1 for job in jobs if insert_job(db_conn, job))
         return new_count, len(jobs) - new_count, None
     except Exception as exc:
@@ -269,7 +285,7 @@ async def run_scrape(
 
     started_at = datetime.now(timezone.utc)
     search_titles = titles or SEARCH_TITLES
-    companies = [c for c in COMPANIES if c["enabled"]]
+    companies = [c for c in COMPANIES if c["enabled"] and not is_blacklisted(c["company_name"])]
     if test_mode:
         companies = [c for c in companies if c["company_name"] in TEST_COMPANIES]
         logger.info("[Runner] Test mode: scraping %d companies", len(companies))

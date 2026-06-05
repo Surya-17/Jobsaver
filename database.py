@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+from config import BLACKLIST_COMPANIES
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -134,12 +136,18 @@ def update_job_status(conn, job_id: int, status: str | None) -> bool:
     return ok
 
 
-def set_job_detail(conn, job_id: int, full_description: str) -> bool:
+def set_job_detail(conn, job_id: int, full_description: str, years_exp: int | None = None) -> bool:
     with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE jobs SET full_description = %s, detail_fetched_at = %s WHERE id = %s",
-            (full_description, _now(), job_id),
-        )
+        if years_exp is not None:
+            cur.execute(
+                "UPDATE jobs SET full_description = %s, years_exp = %s, detail_fetched_at = %s WHERE id = %s",
+                (full_description, years_exp, _now(), job_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE jobs SET full_description = %s, detail_fetched_at = %s WHERE id = %s",
+                (full_description, _now(), job_id),
+            )
         ok = cur.rowcount == 1
     conn.commit()
     return ok
@@ -276,6 +284,11 @@ def query_jobs(
     if max_exp is not None:
         conditions.append("COALESCE(years_exp, 0) < %s")
         params.append(max_exp)
+
+    if BLACKLIST_COMPANIES:
+        for b in BLACKLIST_COMPANIES:
+            conditions.append("company_name NOT ILIKE %s")
+            params.append(f"%{b}%")
 
     where = "WHERE " + " AND ".join(conditions)
     order = "first_seen_at DESC" if sort == "found" else "COALESCE(date_posted, first_seen_at) DESC"

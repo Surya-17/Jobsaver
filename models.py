@@ -33,6 +33,7 @@ class JDResponse(BaseModel):
     ok: bool
     full_description: str | None = None
     detail_fetched_at: str | None = None
+    years_exp: int | None = None
     error: str | None = None
 
 

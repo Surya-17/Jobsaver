@@ -150,14 +150,16 @@ async def fetch_jd(job_id: int):
             raise HTTPException(status_code=404, detail="Job not found")
         if job.get("full_description"):
             return {"ok": True, "full_description": job["full_description"],
-                    "detail_fetched_at": job.get("detail_fetched_at")}
-        text = await fetch_job_detail(job)
+                    "detail_fetched_at": job.get("detail_fetched_at"),
+                    "years_exp": job.get("years_exp")}
+        text, years_exp = await fetch_job_detail(job)
         if not text:
             return {"ok": False, "error": "Could not fetch a job description for this source."}
-        set_job_detail(conn, job_id, text)
+        set_job_detail(conn, job_id, text, years_exp)
         row = get_job(conn, job_id)
         return {"ok": True, "full_description": text,
-                "detail_fetched_at": row.get("detail_fetched_at")}
+                "detail_fetched_at": row.get("detail_fetched_at"),
+                "years_exp": row.get("years_exp")}
     finally:
         conn.close()
 
@@ -171,9 +173,9 @@ async def tailor_resume(job_id: int):
             raise HTTPException(status_code=404, detail="Job not found")
         jd = job.get("full_description")
         if not jd:
-            jd = await fetch_job_detail(job)
+            jd, years_exp = await fetch_job_detail(job)
             if jd:
-                set_job_detail(conn, job_id, jd)
+                set_job_detail(conn, job_id, jd, years_exp)
         if not jd:
             return {"ok": False, "error": "No job description available — fetch the JD first."}
         try:
@@ -221,11 +223,12 @@ def _run_tailor_queue() -> None:
             jd = job.get("full_description")
             if not jd:
                 try:
-                    jd = asyncio.run(fetch_job_detail(job))  # async fetch, own loop
+                    jd, years_exp = asyncio.run(fetch_job_detail(job))  # async fetch, own loop
                 except Exception:  # noqa: BLE001 — skip this job, keep the batch going
                     jd = None
+                    years_exp = None
                 if jd:
-                    set_job_detail(conn, jid, jd)
+                    set_job_detail(conn, jid, jd, years_exp)
             if not jd:
                 _tailor_state["failed"] += 1
             else:
@@ -303,6 +306,18 @@ async def list_queue():
     conn = get_db()
     try:
         return {"jobs": get_queued_jobs(conn)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/queue/apply-all")
+async def apply_all_queue():
+    conn = get_db()
+    try:
+        jobs = get_queued_jobs(conn)
+        for job in jobs:
+            update_job_status(conn, job["id"], "applied")
+        return {"ok": True, "count": len(jobs)}
     finally:
         conn.close()
 

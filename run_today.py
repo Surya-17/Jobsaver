@@ -37,12 +37,13 @@ async def main():
         jd = job.get("full_description")
         if not jd:
             try:
-                jd = await fetch_job_detail(job)
+                jd, years_exp = await fetch_job_detail(job)
             except Exception as e:  # noqa: BLE001 — log and move on
                 print(f"[{i}/{len(ids)}] JD-ERR {company} (id {jid}): {e}", flush=True)
                 jd = None
+                years_exp = None
             if jd:
-                set_job_detail(conn, jid, jd)
+                set_job_detail(conn, jid, jd, years_exp)
         if not jd:
             skipped += 1
             print(f"[{i}/{len(ids)}] SKIP {company} (id {jid}): no JD available", flush=True)
